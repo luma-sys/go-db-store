@@ -30,7 +30,7 @@ func NewSQLStore[T any](db *sql.DB, tableName string, primaryKey string) Store[T
 }
 
 // WithTransaction para SQL usa uma simples transação
-func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (interface{}, error) {
+func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorat
 }
 
 // Has verifica se um registro existe pelo ID
-func (s *SQLStore[T]) Has(ctx context.Context, id interface{}) bool {
+func (s *SQLStore[T]) Has(ctx context.Context, id any) bool {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = ?)", s.tableName, s.primaryKey)
 	var exists bool
 	err := s.db.QueryRowContext(ctx, query, id).Scan(&exists)
@@ -82,7 +82,7 @@ func (s *SQLStore[T]) Count(ctx context.Context, q page.Queryable) (*int64, erro
 }
 
 // FindById busca um registro por ID
-func (s *SQLStore[T]) FindById(ctx context.Context, id interface{}) (*T, error) {
+func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", s.tableName, s.primaryKey)
 
 	stmt, err := s.db.Prepare(query)
@@ -144,7 +144,7 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	v := reflect.ValueOf(e).Elem()
 	fields := make([]string, 0)
 	placeholders := make([]string, 0)
-	values := make([]interface{}, 0)
+	values := make([]any, 0)
 
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Type().Field(i)
@@ -212,7 +212,7 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 		return nil, err
 	}
 
-	ids := make([]interface{}, len(entities))
+	ids := make([]any, len(entities))
 	for i, entity := range entities {
 		v := reflect.ValueOf(&entity).Elem()
 		idField := v.FieldByName("ID")
@@ -232,8 +232,8 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 
 	// Preparar campos para atualização
 	updates := make([]string, 0)
-	values := make([]interface{}, 0)
-	var id interface{}
+	values := make([]any, 0)
+	var id any
 
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Type().Field(i)
@@ -281,7 +281,7 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 }
 
 // UpdateMany atualiza múltiplos registros
-func (s *SQLStore[T]) UpdateMany(ctx context.Context, f page.Queryable, updates map[string]interface{}) (*UpdateResult, error) {
+func (s *SQLStore[T]) UpdateMany(ctx context.Context, f page.Queryable, updates map[string]any) (*UpdateResult, error) {
 	// Verifica se o struct tem campo updated_at
 	var dummy T
 	t := reflect.TypeOf(dummy)
@@ -303,7 +303,7 @@ func (s *SQLStore[T]) UpdateMany(ctx context.Context, f page.Queryable, updates 
 
 	// Preparar campos de atualização
 	setUpdates := make([]string, 0)
-	values := make([]interface{}, 0)
+	values := make([]any, 0)
 
 	for field, value := range updates {
 		setUpdates = append(setUpdates, fmt.Sprintf("%s = ?", field))
@@ -343,7 +343,7 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*
 	fields := make([]string, 0)
 	placeholders := make([]string, 0)
 	updates := make([]string, 0)
-	values := make([]interface{}, 0)
+	values := make([]any, 0)
 
 	upsertField := f.UpsertFieldKey
 	if upsertField == "" {
@@ -416,7 +416,7 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f *StoreUpse
 }
 
 // Delete remove um registro pelo ID
-func (s *SQLStore[T]) Delete(ctx context.Context, id interface{}) error {
+func (s *SQLStore[T]) Delete(ctx context.Context, id any) error {
 	query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", s.tableName, s.primaryKey)
 	_, err := s.db.ExecContext(ctx, query, id)
 	return err
@@ -480,10 +480,10 @@ func (s *SQLStore[T]) DeleteMany(ctx context.Context, f page.Queryable) (*Delete
 //			"age__gte": 18,     // age >= 18
 //			"age__lte": 65,     // age <= 65
 //		}
-func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []interface{}) {
+func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []any) {
 	filters := q.GetFilter()
 	if len(filters) == 0 {
-		return "", make([]interface{}, 0)
+		return "", make([]any, 0)
 	}
 
 	// Ordena as chaves
@@ -494,7 +494,7 @@ func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []interface{})
 	sort.Strings(keys)
 
 	whereConditions := make([]string, 0, len(keys))
-	values := make([]interface{}, 0, len(keys))
+	values := make([]any, 0, len(keys))
 
 	for _, key := range keys {
 		operator := "="
@@ -551,7 +551,7 @@ func (s *SQLStore[T]) toCamelCase(value string) string {
 }
 
 // setValue Função auxiliar para definir valores com conversão de tipo
-func (s *SQLStore[T]) setValue(field reflect.Value, value interface{}) {
+func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
 	if !field.CanSet() {
 		return
 	}
@@ -694,8 +694,8 @@ func (s *SQLStore[T]) parseRow(rows *sql.Rows) (*T, error) {
 	}
 
 	// Cria um slice de valores para scan
-	values := make([]interface{}, len(columns))
-	valuePtrs := make([]interface{}, len(columns))
+	values := make([]any, len(columns))
+	valuePtrs := make([]any, len(columns))
 	for i := range columns {
 		valuePtrs[i] = &values[i]
 	}

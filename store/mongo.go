@@ -31,14 +31,14 @@ func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 	}
 }
 
-func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (interface{}, error) {
+func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error) {
 	session, err := s.coll.Database().Client().StartSession()
 	if err != nil {
 		return nil, err
 	}
 	defer session.EndSession(ctx)
 
-	var result interface{}
+	var result any
 	err = mongo.WithSession(ctx, session, func(sessionCtx mongo.SessionContext) error {
 		err := session.StartTransaction()
 		if err != nil {
@@ -111,7 +111,7 @@ func (s *mongoStore[T]) Count(ctx context.Context, f page.Queryable) (*int64, er
 }
 
 // FindById recupera um documento pelo ID
-func (s *mongoStore[T]) FindById(ctx context.Context, id interface{}) (*T, error) {
+func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	var result T
 
 	filter := bson.M{"_id": id}
@@ -154,7 +154,7 @@ func (s *mongoStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult, error) {
 	now := time.Now()
 
-	docs := make([]interface{}, len(e))
+	docs := make([]any, len(e))
 	for i, doc := range e {
 		// Get value of the document
 		value := reflect.ValueOf(&doc).Elem()
@@ -210,7 +210,7 @@ func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 }
 
 // UpdateMany atualiza múltiplos documentos baseado em um filtro genérico
-func (s *mongoStore[T]) UpdateMany(ctx context.Context, f page.Queryable, d map[string]interface{}) (*UpdateResult, error) {
+func (s *mongoStore[T]) UpdateMany(ctx context.Context, f page.Queryable, d map[string]any) (*UpdateResult, error) {
 	if f == nil {
 		return nil, fmt.Errorf("filtro não pode ser nulo")
 	}
@@ -257,7 +257,7 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 		id = fieldValue.String()
 	}
 
-	var filterField interface{}
+	var filterField any
 	if fieldValue := value.FieldByName(s.storeUpsertFilter.UpsertFieldKey); fieldValue.IsValid() {
 		filterField = fieldValue.Interface()
 	}
@@ -304,7 +304,7 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 			id = fieldValue.String()
 		}
 
-		var filterField interface{}
+		var filterField any
 		if fieldValue := value.FieldByName(s.storeUpsertFilter.UpsertFieldKey); fieldValue.IsValid() {
 			filterField = fieldValue.Interface()
 		}
@@ -335,7 +335,7 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 }
 
 // Delete exclui um documento
-func (s *mongoStore[T]) Delete(ctx context.Context, id interface{}) error {
+func (s *mongoStore[T]) Delete(ctx context.Context, id any) error {
 	result, err := s.coll.DeleteOne(ctx, bson.M{"_id": id})
 	if err != nil {
 		return fmt.Errorf("erro ao deletar documento: %w", err)
@@ -366,7 +366,7 @@ func (s *mongoStore[T]) DeleteMany(ctx context.Context, f page.Queryable) (*Dele
 }
 
 // Has verifica se um documento existe
-func (s *mongoStore[T]) Has(ctx context.Context, id interface{}) bool {
+func (s *mongoStore[T]) Has(ctx context.Context, id any) bool {
 	res, err := s.coll.Find(ctx, bson.M{"_id": id}, options.Find().SetLimit(1))
 	if err != nil {
 		return false
@@ -389,7 +389,7 @@ func (s *mongoStore[T]) mapToBsonD(m map[string]any) bson.D {
 	return bsonD
 }
 
-func (s *mongoStore[T]) removeIDToUpsert(doc interface{}) bson.M {
+func (s *mongoStore[T]) removeIDToUpsert(doc any) bson.M {
 	data, _ := bson.Marshal(doc)
 
 	var docWithoutID bson.M
