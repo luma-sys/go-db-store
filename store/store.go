@@ -3,21 +3,18 @@ package store
 import (
 	"context"
 	"database/sql"
-	"github.com/luma-sys/go-db-store/page"
 
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // TransactionContext abstracts both MongoDB and SQL transaction contexts
-type TransactionContext interface {
-	// This interface will be implemented by mongo.SessionContext and *sql.Tx
-}
+type TransactionContext any // This interface will be implemented by mongo.SessionContext and *sql.Tx
 
 // Make sure mongo.SessionContext implements our interface
 var _ TransactionContext = (*mongo.SessionContext)(nil)
 
 // Make sql.Tx implement our interface
-var _ TransactionContext = (**sql.Tx)(nil)
+var _ TransactionContext = (*sql.Tx)(nil)
 
 // Generic transaction decorator
 type TransactionDecorator func(ctx TransactionContext) (any, error)
@@ -61,10 +58,10 @@ type InsertManyResult struct {
 
 // UpdateResult is the result type returned from UpdateOne, UpdateMany, and ReplaceOne operations.
 type UpdateResult struct {
-	MatchedCount  int64       // The number of registers matched by the filter.
-	ModifiedCount int64       // The number of registers modified by the operation.
-	UpsertedCount int64       // The number of registers upserted by the operation.
-	UpsertedID    any // The _id field of the upserted document, or nil if no upsert was done.
+	MatchedCount  int64 // The number of registers matched by the filter.
+	ModifiedCount int64 // The number of registers modified by the operation.
+	UpsertedCount int64 // The number of registers upserted by the operation.
+	UpsertedID    any   // The _id field of the upserted document, or nil if no upsert was done.
 }
 
 // DeleteResult is the result type returned by DeleteOne and DeleteMany operations.
@@ -72,18 +69,45 @@ type DeleteResult struct {
 	DeletedCount int64 `bson:"n"` // The number of registers deleted.
 }
 
+type FindOptions struct {
+	Page    int64
+	Limit   int64
+	OrderBy string
+	SortBy  string
+}
+
+func (o *FindOptions) Initialize() {
+	if o.Page < 1 {
+		o.Page = 1
+	}
+	// if limit is 0, return all items
+	if o.Limit < 0 {
+		o.Limit = 10
+	}
+	if o.SortBy == "" {
+		o.SortBy = "createdAt"
+	}
+	if o.OrderBy == "" {
+		o.OrderBy = "ASC"
+	}
+}
+
 type Store[T any] interface {
-	WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error)                 // starts a transaction and executes the transaction decorator
-	Has(ctx context.Context, id any) bool                                                      // returns true if an entity exists by id
-	Count(ctx context.Context, q page.Queryable) (*int64, error)                                       // returns the number of entities by filtered query
-	FindById(ctx context.Context, id any) (*T, error)                                          // returns an entity by id
-	FindAll(ctx context.Context, p page.PaginationQueryable) ([]T, error)                              // returns a paginated list of entities
-	Save(ctx context.Context, e *T) (*T, error)                                                        // creates a new entity
-	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error)                                    // creates multiple entities
-	Update(ctx context.Context, e *T) (*T, error)                                                      // Update updates an existing entity
-	UpdateMany(ctx context.Context, f page.Queryable, d map[string]any) (*UpdateResult, error) // UpdateMany updates multiple entities
-	Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*UpdateResult, error)                     // Upsert creates or updates an entity
-	UpsertMany(ctx context.Context, e []T, f *StoreUpsertFilter) (*BulkWriteResult, error)             // creates or updates multiple entities
-	Delete(ctx context.Context, id any) error                                                  // deletes an entity by id
-	DeleteMany(ctx context.Context, f page.Queryable) (*DeleteResult, error)                           // deletes many entities by match filter
+	WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error)    // starts a transaction and executes the transaction decorator
+	Has(ctx context.Context, id any) bool                                         // returns true if an entity exists by id
+	Count(ctx context.Context, q map[string]any) (*int64, error)                  // returns the number of entities by filtered query
+	FindById(ctx context.Context, id any) (*T, error)                             // returns an entity by id
+	FindAll(ctx context.Context, q map[string]any, opts FindOptions) ([]T, error) // returns a paginated list of entities
+
+	Save(ctx context.Context, e *T) (*T, error)                     // creates a new entity
+	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error) // creates multiple entities
+
+	Update(ctx context.Context, e *T) (*T, error)                                              // Update updates an existing entity
+	UpdateMany(ctx context.Context, f map[string]any, d map[string]any) (*UpdateResult, error) // UpdateMany updates multiple entities
+
+	Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*UpdateResult, error)         // Upsert creates or updates an entity
+	UpsertMany(ctx context.Context, e []T, f *StoreUpsertFilter) (*BulkWriteResult, error) // creates or updates multiple entities
+
+	Delete(ctx context.Context, id any) error                                // deletes an entity by id
+	DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error) // deletes many entities by match filter
 }

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/luma-sys/go-db-store/page"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // SQLStore implementa a interface Store para bancos de dados SQL
@@ -68,7 +70,7 @@ func (s *SQLStore[T]) Has(ctx context.Context, id any) bool {
 }
 
 // Count retorna o número de registros baseado em uma consulta
-func (s *SQLStore[T]) Count(ctx context.Context, q page.Queryable) (*int64, error) {
+func (s *SQLStore[T]) Count(ctx context.Context, q map[string]any) (*int64, error) {
 	whereClause, values := s.buildWhereClause(q)
 	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.tableName)
 	query += whereClause
@@ -105,18 +107,18 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 }
 
 // FindAll busca registros com paginação
-func (s *SQLStore[T]) FindAll(ctx context.Context, f page.PaginationQueryable) ([]T, error) {
-	f.Initialize()
+func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
+	opts.Initialize()
 
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
 	query += whereClause
 
-	limit := f.GetLimit()
-	skip := page.Skip(f.GetPage(), limit)
-	query = fmt.Sprintf("%s LIMIT ? OFFSET ?", query)
-
-	values = append(values, limit, skip)
+	if opts.Limit > 0 {
+		skip := page.Skip(opts.Page, opts.Limit)
+		query = fmt.Sprintf("%s LIMIT ? OFFSET ?", query)
+		values = append(values, opts.Limit, skip)
+	}
 
 	// Executa a query
 	rows, err := s.db.QueryContext(ctx, query, values...)
@@ -146,7 +148,7 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	placeholders := make([]string, 0)
 	values := make([]any, 0)
 
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := v.Type().Field(i)
 		fieldName := field.Tag.Get("db")
 
@@ -235,7 +237,7 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	values := make([]any, 0)
 	var id any
 
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := v.Type().Field(i)
 		fieldName := field.Tag.Get("db")
 
@@ -253,7 +255,7 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 		values = append(values, time.Now())
 
 		// Atualiza o valor no struct também
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			field := v.Type().Field(i)
 			if field.Tag.Get("db") == "updated_at" {
 				v.Field(i).Set(reflect.ValueOf(time.Now()))
@@ -281,7 +283,7 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 }
 
 // UpdateMany atualiza múltiplos registros
-func (s *SQLStore[T]) UpdateMany(ctx context.Context, f page.Queryable, updates map[string]any) (*UpdateResult, error) {
+func (s *SQLStore[T]) UpdateMany(ctx context.Context, f map[string]any, updates map[string]any) (*UpdateResult, error) {
 	// Verifica se o struct tem campo updated_at
 	var dummy T
 	t := reflect.TypeOf(dummy)
@@ -290,7 +292,7 @@ func (s *SQLStore[T]) UpdateMany(ctx context.Context, f page.Queryable, updates 
 	}
 
 	hasUpdatedAt := false
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		field := t.Field(i)
 		if field.Tag.Get("db") == "updated_at" {
 			hasUpdatedAt = true
@@ -350,7 +352,7 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*
 		upsertField = s.primaryKey
 	}
 
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := v.Type().Field(i)
 		fieldName := field.Tag.Get("db")
 
@@ -423,7 +425,7 @@ func (s *SQLStore[T]) Delete(ctx context.Context, id any) error {
 }
 
 // DeleteMany remove múltiplos registros
-func (s *SQLStore[T]) DeleteMany(ctx context.Context, f page.Queryable) (*DeleteResult, error) {
+func (s *SQLStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error) {
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("DELETE FROM %s", s.tableName)
 	query += whereClause
@@ -480,8 +482,7 @@ func (s *SQLStore[T]) DeleteMany(ctx context.Context, f page.Queryable) (*Delete
 //			"age__gte": 18,     // age >= 18
 //			"age__lte": 65,     // age <= 65
 //		}
-func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []any) {
-	filters := q.GetFilter()
+func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 	if len(filters) == 0 {
 		return "", make([]any, 0)
 	}
@@ -523,9 +524,9 @@ func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []any) {
 				operator = "IN"
 			case "not":
 				operator = "!="
-				//case "is_null":
+				// case "is_null":
 				//	operator = "IS NULL"
-				//case "is_not_null":
+				// case "is_not_null":
 				//	operator = "IS NOT NULL"
 			}
 		}
@@ -539,13 +540,15 @@ func (s *SQLStore[T]) buildWhereClause(q page.Queryable) (string, []any) {
 
 // toCamelCase Converte snake_case para CamelCase
 func (s *SQLStore[T]) toCamelCase(value string) string {
+	capitalize := cases.Title(language.Portuguese)
 	parts := strings.Split(value, "_")
-	for i := 0; i < len(parts); i++ {
+	for i := range parts {
 		if parts[i] == "id" {
 			parts[i] = "ID"
 			continue
 		}
-		parts[i] = strings.Title(parts[i])
+
+		parts[i] = capitalize.String(parts[i])
 	}
 	return strings.Join(parts, "")
 }

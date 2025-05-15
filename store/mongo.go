@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/luma-sys/go-db-store/page"
 	"reflect"
 	"time"
+
+	"github.com/luma-sys/go-db-store/page"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -59,28 +60,27 @@ func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn TransactionDecor
 }
 
 // FindAll recupera documentos com paginação e filtros
-func (s *mongoStore[T]) FindAll(ctx context.Context, f page.PaginationQueryable) ([]T, error) {
-	f.Initialize()
+func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
+	opts.Initialize()
 
 	// Usando o filtro fornecido ou um filtro vazio se nenhum for fornecido
-	filter := s.mapToBsonD(f.GetFilter())
+	filter := s.mapToBsonD(f)
 	findOptions := options.Find()
 
 	// Configurando a paginação
-	limit := f.GetLimit()
-	if limit > 0 {
-		skip := page.Skip(f.GetPage(), limit)
+	if opts.Limit > 0 {
+		skip := page.Skip(opts.Page, opts.Limit)
 		findOptions.SetSkip(skip)
-		findOptions.SetLimit(limit)
+		findOptions.SetLimit(opts.Limit)
 	}
 
 	// Configurando a ordenação
-	if f.GetSortBy() != "" {
+	if opts.SortBy != "" {
 		sortValue := 1
-		if f.GetOrderBy() == "DESC" {
+		if opts.OrderBy == "DESC" {
 			sortValue = -1
 		}
-		findOptions.SetSort(bson.D{{Key: f.GetSortBy(), Value: sortValue}})
+		findOptions.SetSort(bson.D{{Key: opts.SortBy, Value: sortValue}})
 	}
 
 	cursor, err := s.coll.Find(ctx, filter, findOptions)
@@ -98,9 +98,9 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f page.PaginationQueryable)
 }
 
 // Count retorna o total de registros
-func (s *mongoStore[T]) Count(ctx context.Context, f page.Queryable) (*int64, error) {
+func (s *mongoStore[T]) Count(ctx context.Context, f map[string]any) (*int64, error) {
 	// Usando o filtro fornecido ou um filtro vazio se nenhum for fornecido
-	filter := s.mapToBsonD(f.GetFilter())
+	filter := s.mapToBsonD(f)
 
 	total, err := s.coll.CountDocuments(ctx, filter)
 	if err != nil {
@@ -210,13 +210,13 @@ func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 }
 
 // UpdateMany atualiza múltiplos documentos baseado em um filtro genérico
-func (s *mongoStore[T]) UpdateMany(ctx context.Context, f page.Queryable, d map[string]any) (*UpdateResult, error) {
+func (s *mongoStore[T]) UpdateMany(ctx context.Context, f map[string]any, d map[string]any) (*UpdateResult, error) {
 	if f == nil {
 		return nil, fmt.Errorf("filtro não pode ser nulo")
 	}
 
 	// Converte o map de filtro para bson.D
-	filter := s.mapToBsonD(f.GetFilter())
+	filter := s.mapToBsonD(f)
 
 	d["updatedAt"] = time.Now().UTC()
 
@@ -348,13 +348,13 @@ func (s *mongoStore[T]) Delete(ctx context.Context, id any) error {
 	return nil
 }
 
-func (s *mongoStore[T]) DeleteMany(ctx context.Context, f page.Queryable) (*DeleteResult, error) {
+func (s *mongoStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error) {
 	if f == nil {
 		return nil, fmt.Errorf("filtro não pode ser nulo")
 	}
 
 	// Converte o map de filtro para bson.D
-	filter := s.mapToBsonD(f.GetFilter())
+	filter := s.mapToBsonD(f)
 
 	// Executa o updateMany
 	result, err := s.coll.DeleteMany(ctx, filter)
