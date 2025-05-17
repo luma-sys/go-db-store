@@ -524,11 +524,16 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 				operator = "IN"
 			case "not":
 				operator = "!="
-				// case "is_null":
-				//	operator = "IS NULL"
-				// case "is_not_null":
-				//	operator = "IS NOT NULL"
+			case "is_null":
+				operator = "IS NULL"
+			case "is_not_null":
+				operator = "IS NOT NULL"
 			}
+		}
+
+		if operator == "IS NULL" || operator == "IS NOT NULL" {
+			whereConditions = append(whereConditions, fmt.Sprintf("%s %s", field, operator))
+			continue
 		}
 
 		whereConditions = append(whereConditions, fmt.Sprintf("%s %s ?", field, operator))
