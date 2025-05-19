@@ -7,9 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tryvium-travels/memongo"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type TestEntity struct {
@@ -28,7 +28,8 @@ func setupMongoTest(t *testing.T) (*mongo.Collection, func()) {
 	}
 
 	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoServer.URI()))
+	opts := options.Client().ApplyURI(mongoServer.URI()).SetMaxPoolSize(200)
+	client, err := mongo.Connect(opts)
 	if err != nil {
 		t.Fatalf("Erro ao conectar ao MongoDB: %v", err)
 	}

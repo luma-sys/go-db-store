@@ -3,6 +3,7 @@ package enum
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -27,12 +28,7 @@ var AllDatabaseDriver = []DatabaseDriver{
 
 // IsValid verifica se o status é válido
 func (s DatabaseDriver) IsValid() bool {
-	for _, status := range AllDatabaseDriver {
-		if s == status {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AllDatabaseDriver, s)
 }
 
 // UnmarshalJSON implementa a interface json.Unmarshaler

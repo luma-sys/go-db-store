@@ -3,8 +3,7 @@ package utils
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func CreateDatePeriodFilter(start, end time.Time) bson.M {
@@ -14,10 +13,10 @@ func CreateDatePeriodFilter(start, end time.Time) bson.M {
 
 	filter := bson.M{}
 	if !start.IsZero() {
-		filter["$gte"] = primitive.NewDateTimeFromTime(start)
+		filter["$gte"] = bson.NewDateTimeFromTime(start)
 	}
 	if !end.IsZero() {
-		filter["$lte"] = primitive.NewDateTimeFromTime(end)
+		filter["$lte"] = bson.NewDateTimeFromTime(end)
 	}
 
 	return filter
@@ -31,11 +30,10 @@ func CreateDatePeriodFilterMap(start, end time.Time) bson.M {
 	filter := make(map[string]any)
 
 	if !start.IsZero() {
-		filter["$gte"] = primitive.NewDateTimeFromTime(start)
+		filter["$gte"] = bson.NewDateTimeFromTime(start)
 	}
-
 	if !end.IsZero() {
-		filter["$lte"] = primitive.NewDateTimeFromTime(end)
+		filter["$lte"] = bson.NewDateTimeFromTime(end)
 	}
 
 	return filter

@@ -9,9 +9,10 @@ import (
 
 	"github.com/luma-sys/go-db-store/page"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
 )
 
 type mongoStore[T any] struct {
@@ -33,28 +34,18 @@ func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 }
 
 func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error) {
+	wc := writeconcern.Majority()
+	txnOptions := options.Transaction().SetWriteConcern(wc)
+
 	session, err := s.coll.Database().Client().StartSession()
 	if err != nil {
 		return nil, err
 	}
 	defer session.EndSession(ctx)
 
-	var result any
-	err = mongo.WithSession(ctx, session, func(sessionCtx mongo.SessionContext) error {
-		err := session.StartTransaction()
-		if err != nil {
-			return err
-		}
-
-		// Call the function with sessionCtx (which implements TransactionContext)
-		result, err = fn(sessionCtx)
-		if err != nil {
-			session.AbortTransaction(sessionCtx)
-			return err
-		}
-
-		return session.CommitTransaction(sessionCtx)
-	})
+	result, err := session.WithTransaction(ctx, func(sessCtx context.Context) (any, error) {
+		return fn(sessCtx)
+	}, txnOptions)
 
 	return result, err
 }
@@ -268,7 +259,7 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 	}
 
 	filter := bson.D{{Key: s.storeUpsertFilter.UpsertBsonKey, Value: filterField}}
-	result, err := s.coll.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+	result, err := s.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documento: %w", err)
 	}

@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"testing"
+	"time"
+
 	"github.com/luma-sys/go-db-store/enum"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
 )
 
 type YourEntityType struct {
@@ -45,10 +46,10 @@ func setupDB() (*sql.DB, error) {
 func TestHas(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	// Teste de inserção
@@ -67,10 +68,10 @@ func TestHas(t *testing.T) {
 func TestCount(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 	_, _ = store.Save(context.Background(), &YourEntityType{ID: 1, Name: "John"})
 	_, _ = store.Save(context.Background(), &YourEntityType{ID: 2, Name: "Jane"})
@@ -84,10 +85,10 @@ func TestCount(t *testing.T) {
 func TestFindById(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	now := time.Now()
@@ -221,10 +222,10 @@ func TestFindById(t *testing.T) {
 func TestSave(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	now := time.Now()
@@ -360,10 +361,10 @@ func TestSave(t *testing.T) {
 func TestFindAll(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	// Preparar dados de teste
@@ -485,10 +486,10 @@ func TestFindAll(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	now := time.Now().UTC()
@@ -609,10 +610,10 @@ func TestUpdate(t *testing.T) {
 func TestUpsert(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	now := time.Now().UTC()
@@ -761,10 +762,10 @@ func TestUpsert(t *testing.T) {
 func TestDelete(t *testing.T) {
 	// Setup
 	db, err := setupDB()
-	defer db.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
 	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
 	tests := []struct {

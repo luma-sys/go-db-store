@@ -4,16 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/luma-sys/go-db-store/enum"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/luma-sys/go-db-store/enum"
 	"github.com/luma-sys/go-db-store/page"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 // SQLStore implementa a interface Store para bancos de dados SQL
@@ -489,16 +487,16 @@ func (s *SQLStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*Delete
 	return &DeleteResult{DeletedCount: rowsAffected}, nil
 }
 
-func (s *SQLStore[T]) isOracleDriver() bool {
-	// Para Oracle
-	var version string
-	err := s.db.QueryRow("SELECT banner FROM v$version WHERE banner LIKE 'Oracle%'").Scan(&version)
-	if err == nil && strings.Contains(strings.ToLower(version), "oracle") {
-		return true
-	}
-
-	return false
-}
+// func (s *SQLStore[T]) isOracleDriver() bool {
+// 	// Para Oracle
+// 	var version string
+// 	err := s.db.QueryRow("SELECT banner FROM v$version WHERE banner LIKE 'Oracle%'").Scan(&version)
+// 	if err == nil && strings.Contains(strings.ToLower(version), "oracle") {
+// 		return true
+// 	}
+//
+// 	return false
+// }
 
 // buildWhereClause constrói a cláusula WHERE baseada nos filtros fornecidos.
 //
@@ -599,17 +597,17 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 
 		if operator == "IN" {
 			// Obter o slice de valores
-			valuesSlice, ok := value.([]interface{})
+			valuesSlice, ok := value.([]any)
 			if !ok {
 				// Tente converter outros tipos de slice
 				switch v := value.(type) {
 				case []int:
-					valuesSlice = make([]interface{}, len(v))
+					valuesSlice = make([]any, len(v))
 					for i, val := range v {
 						valuesSlice[i] = val
 					}
 				case []string:
-					valuesSlice = make([]interface{}, len(v))
+					valuesSlice = make([]any, len(v))
 					for i, val := range v {
 						valuesSlice[i] = val
 					}
@@ -618,8 +616,8 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 					// Tentar uma última abordagem usando reflection
 					rv := reflect.ValueOf(value)
 					if rv.Kind() == reflect.Slice {
-						valuesSlice = make([]interface{}, rv.Len())
-						for i := 0; i < rv.Len(); i++ {
+						valuesSlice = make([]any, rv.Len())
+						for i := range rv.Len() {
 							valuesSlice[i] = rv.Index(i).Interface()
 						}
 					} else {
@@ -642,9 +640,7 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 				field, operator, strings.Join(placeholders, ", ")))
 
 			// Adicionar cada valor individualmente ao slice de valores
-			for _, val := range valuesSlice {
-				values = append(values, val)
-			}
+			values = append(values, valuesSlice...)
 
 			continue
 		}
@@ -657,19 +653,19 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 }
 
 // toCamelCase Converte snake_case para CamelCase
-func (s *SQLStore[T]) toCamelCase(value string) string {
-	capitalize := cases.Title(language.Portuguese)
-	parts := strings.Split(value, "_")
-	for i := range parts {
-		if parts[i] == "id" {
-			parts[i] = "ID"
-			continue
-		}
-
-		parts[i] = capitalize.String(parts[i])
-	}
-	return strings.Join(parts, "")
-}
+// func (s *SQLStore[T]) toCamelCase(value string) string {
+// 	capitalize := cases.Title(language.Portuguese)
+// 	parts := strings.Split(value, "_")
+// 	for i := range parts {
+// 		if parts[i] == "id" {
+// 			parts[i] = "ID"
+// 			continue
+// 		}
+//
+// 		parts[i] = capitalize.String(parts[i])
+// 	}
+// 	return strings.Join(parts, "")
+// }
 
 // setValue Função auxiliar para definir valores com conversão de tipo
 func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
@@ -857,7 +853,7 @@ func (s *SQLStore[T]) parseRow(rows *sql.Rows) (*T, error) {
 
 	// Criar um mapa de tags 'db' para campos
 	dbTagToField := make(map[string]reflect.Value)
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := v.Field(i)
 		typeField := t.Field(i)
 		tag := typeField.Tag.Get("db")

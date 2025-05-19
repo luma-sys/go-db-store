@@ -5,8 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 func TestCreateDatePeriodFilter(t *testing.T) {
@@ -26,21 +25,21 @@ func TestCreateDatePeriodFilter(t *testing.T) {
 			name:     "deve criar filtro apenas com start",
 			start:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			end:      time.Time{},
-			expected: bson.M{"$gte": primitive.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))},
+			expected: bson.M{"$gte": bson.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))},
 		},
 		{
 			name:     "deve criar filtro apenas com end",
 			start:    time.Time{},
 			end:      time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
-			expected: bson.M{"$lte": primitive.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))},
+			expected: bson.M{"$lte": bson.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))},
 		},
 		{
 			name:  "deve criar filtro com start e end",
 			start: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			end:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
 			expected: bson.M{
-				"$gte": primitive.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
-				"$lte": primitive.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)),
+				"$gte": bson.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+				"$lte": bson.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)),
 			},
 		},
 	}
@@ -70,21 +69,21 @@ func TestCreateDatePeriodFilterMap(t *testing.T) {
 			name:     "deve criar filtro apenas com start",
 			start:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			end:      time.Time{},
-			expected: bson.M{"$gte": primitive.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))},
+			expected: bson.M{"$gte": bson.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))},
 		},
 		{
 			name:     "deve criar filtro apenas com end",
 			start:    time.Time{},
 			end:      time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
-			expected: bson.M{"$lte": primitive.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))},
+			expected: bson.M{"$lte": bson.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC))},
 		},
 		{
 			name:  "deve criar filtro com start e end",
 			start: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			end:   time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
 			expected: bson.M{
-				"$gte": primitive.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
-				"$lte": primitive.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)),
+				"$gte": bson.NewDateTimeFromTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+				"$lte": bson.NewDateTimeFromTime(time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)),
 			},
 		},
 	}
