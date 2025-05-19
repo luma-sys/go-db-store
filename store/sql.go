@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/luma-sys/go-db-store/enum"
 	"reflect"
 	"sort"
 	"strconv"
@@ -116,12 +117,24 @@ func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOp
 
 	if opts.Limit > 0 {
 		skip := page.Skip(opts.Page, opts.Limit)
-		query = fmt.Sprintf("%s LIMIT ? OFFSET ?", query)
-		values = append(values, opts.Limit, skip)
+
+		if s.isOracleDriver() {
+			query = fmt.Sprintf("%s OFFSET :1 ROWS FETCH FIRST :2 ROWS ONLY", query)
+			values = append(values, skip, opts.Limit)
+		} else {
+			query = fmt.Sprintf("%s LIMIT ? OFFSET ?", query)
+			values = append(values, opts.Limit, skip)
+		}
 	}
 
+	stmt, err := s.db.Prepare(query)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao preparar query: %v", err)
+	}
+	defer stmt.Close()
+
 	// Executa a query
-	rows, err := s.db.QueryContext(ctx, query, values...)
+	rows, err := stmt.Query(values...)
 	if err != nil {
 		return nil, fmt.Errorf("error querying %s: %w", s.tableName, err)
 	}
@@ -439,6 +452,17 @@ func (s *SQLStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*Delete
 	return &DeleteResult{DeletedCount: rowsAffected}, nil
 }
 
+func (s *SQLStore[T]) isOracleDriver() bool {
+	// Para Oracle
+	var version string
+	err := s.db.QueryRow("SELECT banner FROM v$version WHERE banner LIKE 'Oracle%'").Scan(&version)
+	if err == nil && strings.Contains(strings.ToLower(version), "oracle") {
+		return true
+	}
+
+	return false
+}
+
 // buildWhereClause constrói a cláusula WHERE baseada nos filtros fornecidos.
 //
 // Operadores suportados:
@@ -571,10 +595,34 @@ func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
 			// Obtém o tipo do elemento do ponteiro
 			elemType := field.Type().Elem()
 
+			// Cria uma nova instância do tipo do enum
+			newInstance := reflect.New(elemType).Interface()
+
+			// Tenta converter usando a interface StringConverter através de uma type assertion
+			if converter, ok := newInstance.(enum.StringConverter); ok {
+				var strValue string
+				switch v := value.(type) {
+				case []byte:
+					strValue = string(v)
+				default:
+					strValue = fmt.Sprintf("%v", value)
+				}
+
+				// Converte a string para o tipo específico
+				converted, err := converter.FromString(strValue)
+				if err == nil {
+					// Define o valor no campo
+					field.Set(reflect.ValueOf(converted))
+				} else {
+					fmt.Printf("Erro ao converter para %s: %v\n", elemType.String(), err)
+				}
+				return
+			}
+
 			// Cria um novo valor do tipo correto
 			newValue := reflect.New(elemType)
 
-			// Converte o valor para o tipo correto
+			// Converte o val	or para o tipo correto
 			convertedValue, err := s.convertToType(reflect.ValueOf(value), elemType)
 			if err != nil {
 				// Lida com erro de conversão
@@ -716,14 +764,23 @@ func (s *SQLStore[T]) parseRow(rows *sql.Rows) (*T, error) {
 	// Cria a estrutura de retorno
 	entity := reflect.New(reflect.TypeOf((*T)(nil)).Elem()).Interface().(*T)
 	v := reflect.ValueOf(entity).Elem()
+	t := v.Type()
 
-	// Mapeia os valores para os campos
+	// Criar um mapa de tags 'db' para campos
+	dbTagToField := make(map[string]reflect.Value)
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		typeField := t.Field(i)
+		tag := typeField.Tag.Get("db")
+		if tag != "" && tag != "-" {
+			dbTagToField[tag] = field
+		}
+	}
+
+	// Mapeia os valores para os campos usando as tags 'db'
 	for i, column := range columns {
-		// Converte o nome da coluna para o formato do campo (CamelCase)
-		fieldName := s.toCamelCase(column)
-		field := v.FieldByName(fieldName)
-
-		if field.IsValid() {
+		// Procura pelo campo com a tag 'db' correspondente
+		if field, ok := dbTagToField[column]; ok && field.IsValid() {
 			// Converte e atribui o valor
 			s.setValue(field, values[i])
 		}
