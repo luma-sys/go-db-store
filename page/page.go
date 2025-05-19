@@ -2,6 +2,7 @@ package page
 
 import "math"
 
+// PageMeta representa um metadata de paginação
 type PageMeta struct {
 	TotalItems   int `json:"totalItems"`
 	CurrentPage  int `json:"currentPage"`
@@ -10,16 +11,19 @@ type PageMeta struct {
 	TotalPages   int `json:"totalPages"`
 }
 
+// Page representa uma paginação
 type Page[T any] struct {
 	Items []T      `json:"items"`
 	Meta  PageMeta `json:"meta"`
 }
 
+// Cursor representa um cursor de paginação [OLD MODE]
 type Cursor[T any] struct {
 	Next  *string `json:"next"`
 	Items []T     `json:"items"`
 }
 
+// New cria uma paginação
 func New[T any](items []T, page, limit, totalItems int64) *Page[T] {
 	if items == nil {
 		items = []T{}
@@ -44,6 +48,7 @@ func New[T any](items []T, page, limit, totalItems int64) *Page[T] {
 	}
 }
 
+// NewEmpty cria uma paginação vazia
 func NewEmpty[T any](page, limit int64) *Page[T] {
 	return &Page[T]{
 		Items: []T{},
@@ -57,6 +62,7 @@ func NewEmpty[T any](page, limit int64) *Page[T] {
 	}
 }
 
+// NewEmptyCursor cria um cursor vazio [OLD MODE]
 func NewEmptyCursor[T any]() *Cursor[T] {
 	return &Cursor[T]{
 		Items: []T{},
@@ -64,6 +70,7 @@ func NewEmptyCursor[T any]() *Cursor[T] {
 	}
 }
 
+// NewEmptyCursor cria um cursor [OLD MODE]
 func NewCursor[T any](items []T, limit int64, next func(item T) string) *Cursor[T] {
 	if items == nil {
 		items = []T{}
@@ -83,6 +90,7 @@ func NewCursor[T any](items []T, limit int64, next func(item T) string) *Cursor[
 	}
 }
 
+// Skip retorna o offset para a paginação
 func Skip(page, limit int64) int64 {
 	return (page - 1) * limit
 }

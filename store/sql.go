@@ -18,17 +18,21 @@ import (
 
 // SQLStore implementa a interface Store para bancos de dados SQL
 type SQLStore[T any] struct {
-	db         *sql.DB
-	tableName  string
-	primaryKey string
+	db            *sql.DB
+	driver        enum.DatabaseDriver
+	tableName     string
+	primaryKey    string
+	autoincrement bool
 }
 
 // NewSQLStore cria uma nova instância de SQLStore
-func NewSQLStore[T any](db *sql.DB, tableName string, primaryKey string) Store[T] {
+func NewSQLStore[T any](db *sql.DB, driver enum.DatabaseDriver, tableName string, primaryKey string, autoincrement bool) Store[T] {
 	return &SQLStore[T]{
-		db:         db,
-		tableName:  tableName,
-		primaryKey: primaryKey,
+		db:            db,
+		driver:        driver,
+		tableName:     tableName,
+		primaryKey:    primaryKey,
+		autoincrement: autoincrement,
 	}
 }
 
@@ -118,7 +122,7 @@ func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOp
 	if opts.Limit > 0 {
 		skip := page.Skip(opts.Page, opts.Limit)
 
-		if s.isOracleDriver() {
+		if s.driver == enum.DatabaseDriverOracle {
 			query = fmt.Sprintf("%s OFFSET :1 ROWS FETCH FIRST :2 ROWS ONLY", query)
 			values = append(values, skip, opts.Limit)
 		} else {
@@ -170,11 +174,13 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 			continue
 		}
 
-		if fieldName != s.primaryKey {
-			fields = append(fields, fieldName)
-			placeholders = append(placeholders, "?")
-			values = append(values, v.Field(i).Interface())
+		if fieldName == s.primaryKey && s.autoincrement {
+			continue
 		}
+
+		fields = append(fields, fieldName)
+		placeholders = append(placeholders, "?")
+		values = append(values, v.Field(i).Interface())
 	}
 
 	query := fmt.Sprintf(
@@ -287,9 +293,15 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 		s.primaryKey,
 	)
 
-	_, err := s.db.ExecContext(ctx, query, values...)
+	result, err := s.db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return nil, err
+	}
+
+	if rowsAffected, err := result.RowsAffected(); err == nil {
+		if rowsAffected == 0 {
+			return nil, fmt.Errorf("registro não encontrado")
+		}
 	}
 
 	return e, nil
@@ -386,13 +398,38 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*
 		values = append(values, time.Now())
 	}
 
-	query := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s",
-		s.tableName,
-		strings.Join(fields, ", "),
-		strings.Join(placeholders, ", "),
-		strings.Join(updates, ", "),
-	)
+	var query string
+	driverName := s.driver
+	switch driverName {
+	case enum.DatabaseDriverMysql, enum.DatabaseDriverMariaDB:
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s",
+			s.tableName,
+			strings.Join(fields, ", "),
+			strings.Join(placeholders, ", "),
+			strings.Join(updates, ", "),
+		)
+	case enum.DatabaseDriverSqlite:
+		query = fmt.Sprintf(
+			"INSERT OR REPLACE INTO %s (%s) VALUES (%s)",
+			s.tableName,
+			strings.Join(fields, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	case enum.DatabaseDriverPostgres:
+		// Para PostgreSQL, a sintaxe seria diferente
+		conflictField := upsertField
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+			s.tableName,
+			strings.Join(fields, ", "),
+			strings.Join(placeholders, ", "),
+			conflictField,
+			strings.Join(updates, ", "),
+		)
+	default:
+		return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", driverName.GetValue())
+	}
 
 	result, err := s.db.ExecContext(ctx, query, values...)
 	if err != nil {
@@ -557,6 +594,58 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 
 		if operator == "IS NULL" || operator == "IS NOT NULL" {
 			whereConditions = append(whereConditions, fmt.Sprintf("%s %s", field, operator))
+			continue
+		}
+
+		if operator == "IN" {
+			// Obter o slice de valores
+			valuesSlice, ok := value.([]interface{})
+			if !ok {
+				// Tente converter outros tipos de slice
+				switch v := value.(type) {
+				case []int:
+					valuesSlice = make([]interface{}, len(v))
+					for i, val := range v {
+						valuesSlice[i] = val
+					}
+				case []string:
+					valuesSlice = make([]interface{}, len(v))
+					for i, val := range v {
+						valuesSlice[i] = val
+					}
+				// Adicione outros tipos conforme necessário ([]float64, etc.)
+				default:
+					// Tentar uma última abordagem usando reflection
+					rv := reflect.ValueOf(value)
+					if rv.Kind() == reflect.Slice {
+						valuesSlice = make([]interface{}, rv.Len())
+						for i := 0; i < rv.Len(); i++ {
+							valuesSlice[i] = rv.Index(i).Interface()
+						}
+					} else {
+						// Se não for um slice, trate como um valor único
+						whereConditions = append(whereConditions, fmt.Sprintf("%s %s (?)", field, operator))
+						values = append(values, value)
+						continue
+					}
+				}
+			}
+
+			// Criar placeholders para cada valor no slice: (?, ?, ?)
+			placeholders := make([]string, len(valuesSlice))
+			for i := range valuesSlice {
+				placeholders[i] = "?"
+			}
+
+			// Construir a condição WHERE com os placeholders
+			whereConditions = append(whereConditions, fmt.Sprintf("%s %s (%s)",
+				field, operator, strings.Join(placeholders, ", ")))
+
+			// Adicionar cada valor individualmente ao slice de valores
+			for _, val := range valuesSlice {
+				values = append(values, val)
+			}
+
 			continue
 		}
 
