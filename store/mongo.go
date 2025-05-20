@@ -290,15 +290,17 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 			updated.Set(reflect.ValueOf(now))
 		}
 
-		var id string
-		if fieldValue := value.FieldByName("ID"); fieldValue.IsValid() {
-			id = fieldValue.String()
+		fieldValue := value.FieldByName("ID")
+		if !fieldValue.IsValid() {
+			return nil, fmt.Errorf("invalid id from %d", i)
 		}
+		id := fieldValue.String()
 
-		var filterField any
-		if fieldValue := value.FieldByName(s.storeUpsertFilter.UpsertFieldKey); fieldValue.IsValid() {
-			filterField = fieldValue.Interface()
+		fieldValue = value.FieldByName(s.storeUpsertFilter.UpsertFieldKey)
+		if !fieldValue.IsValid() {
+			return nil, fmt.Errorf("invalid upset field name from %d", i)
 		}
+		filterField := fieldValue.Interface()
 
 		update := bson.M{
 			"$set":         s.removeIDToUpsert(doc),
@@ -313,8 +315,8 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 	}
 
 	result, err := s.coll.BulkWrite(ctx, operations)
-	if err == nil {
-		return nil, fmt.Errorf("erro ao criar documentos")
+	if err != nil {
+		return nil, fmt.Errorf("erro ao atualizar documentos: %w", err)
 	}
 
 	return &BulkWriteResult{
