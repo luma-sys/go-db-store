@@ -65,7 +65,7 @@ func (s *SQLStore[T]) Has(ctx context.Context, id any) bool {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = ?)", s.tableName, s.primaryKey)
 
 	var exists bool
-	err := s.db.QueryRowContext(ctx, query, s.tableName, s.primaryKey, id).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&exists)
 
 	return err == nil && exists
 }
