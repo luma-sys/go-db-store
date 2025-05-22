@@ -14,7 +14,6 @@ import (
 	"github.com/luma-sys/go-db-store/page"
 )
 
-// SQLStore implementa a interface Store para bancos de dados SQL
 type SQLStore[T any] struct {
 	db            *sql.DB
 	driver        enum.DatabaseDriver
@@ -23,7 +22,6 @@ type SQLStore[T any] struct {
 	autoincrement bool
 }
 
-// NewSQLStore cria uma nova instância de SQLStore
 func NewSQLStore[T any](db *sql.DB, driver enum.DatabaseDriver, tableName string, primaryKey string, autoincrement bool) Store[T] {
 	return &SQLStore[T]{
 		db:            db,
@@ -35,7 +33,7 @@ func NewSQLStore[T any](db *sql.DB, driver enum.DatabaseDriver, tableName string
 }
 
 // WithTransaction para SQL usa uma simples transação
-func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error) {
+func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn Transaction) (any, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -48,13 +46,12 @@ func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorat
 		}
 	}()
 
-	// Call the function with tx (which implements TransactionContext)
 	result, err := fn(tx)
 	if err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
 			return nil, fmt.Errorf("transaction error: %w, rollback error: %v", err, rollbackErr)
 		}
-		return nil, err
+		return nil, fmt.Errorf("transaction error: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -64,11 +61,12 @@ func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorat
 	return result, nil
 }
 
-// Has verifica se um registro existe pelo ID
 func (s *SQLStore[T]) Has(ctx context.Context, id any) bool {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = ?)", s.tableName, s.primaryKey)
+
 	var exists bool
-	err := s.db.QueryRowContext(ctx, query, id).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, query, s.tableName, s.primaryKey, id).Scan(&exists)
+
 	return err == nil && exists
 }
 
@@ -83,6 +81,7 @@ func (s *SQLStore[T]) Count(ctx context.Context, q map[string]any) (*int64, erro
 	if err != nil {
 		return nil, err
 	}
+
 	return &count, nil
 }
 

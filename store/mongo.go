@@ -33,7 +33,7 @@ func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 	}
 }
 
-func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn TransactionDecorator) (any, error) {
+func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn Transaction) (any, error) {
 	wc := writeconcern.Majority()
 	txnOptions := options.Transaction().SetWriteConcern(wc)
 
@@ -56,13 +56,13 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 
 	// Usando o filtro fornecido ou um filtro vazio se nenhum for fornecido
 	filter := s.mapToBsonD(f)
-	findOptions := options.Find()
+	findOpts := options.Find()
 
 	// Configurando a paginação
 	if opts.Limit > 0 {
 		skip := page.Skip(opts.Page, opts.Limit)
-		findOptions.SetSkip(skip)
-		findOptions.SetLimit(opts.Limit)
+		findOpts.SetSkip(skip)
+		findOpts.SetLimit(opts.Limit)
 	}
 
 	// Configurando a ordenação
@@ -71,10 +71,10 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 		if opts.OrderBy == "DESC" {
 			sortValue = -1
 		}
-		findOptions.SetSort(bson.D{{Key: opts.SortBy, Value: sortValue}})
+		findOpts.SetSort(bson.D{{Key: opts.SortBy, Value: sortValue}})
 	}
 
-	cursor, err := s.coll.Find(ctx, filter, findOptions)
+	cursor, err := s.coll.Find(ctx, filter, findOpts)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar documentos: %w", err)
 	}
@@ -90,7 +90,6 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 
 // Count retorna o total de registros
 func (s *mongoStore[T]) Count(ctx context.Context, f map[string]any) (*int64, error) {
-	// Usando o filtro fornecido ou um filtro vazio se nenhum for fornecido
 	filter := s.mapToBsonD(f)
 
 	total, err := s.coll.CountDocuments(ctx, filter)
@@ -120,15 +119,11 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 // Save salva um documento
 func (s *mongoStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	now := time.Now()
-
-	// Obtém o valor atual do documento
 	value := reflect.ValueOf(e).Elem()
 
-	// Atualiza CreatedAt se existir
 	if created := value.FieldByName("CreatedAt"); created.IsValid() {
 		created.Set(reflect.ValueOf(now))
 	}
-	// Atualiza UpdatedAt se existir
 	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 		updated.Set(reflect.ValueOf(now))
 	}
@@ -147,15 +142,11 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 
 	docs := make([]any, len(e))
 	for i, doc := range e {
-		// Get value of the document
 		value := reflect.ValueOf(&doc).Elem()
 
-		// Update CreatedAt if exists
 		if created := value.FieldByName("CreatedAt"); created.IsValid() {
 			created.Set(reflect.ValueOf(now))
 		}
-
-		// Update UpdatedAt if exists
 		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 			updated.Set(reflect.ValueOf(now))
 		}
@@ -174,26 +165,23 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 // Update atualiza um documento
 func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	now := time.Now()
-
-	// Obtém o valor atual do documento
 	value := reflect.ValueOf(e).Elem()
-
 	id := value.FieldByName("ID").String()
 
-	// Atualiza apenas UpdatedAt
 	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 		updated.Set(reflect.ValueOf(now))
 	}
 
+	filter := bson.M{"_id": id}
 	update := bson.M{"$set": e}
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var updated T
-	err := s.coll.FindOneAndUpdate(ctx, bson.M{"_id": id}, update, opts).Decode(&updated)
+	err := s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, fmt.Errorf("documento não encontrado para atualização")
+	}
 	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, fmt.Errorf("documento não encontrado para atualização")
-		}
 		return nil, fmt.Errorf("erro ao atualizar documento: %w", err)
 	}
 
@@ -206,16 +194,11 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, f map[string]any, d map[
 		return nil, fmt.Errorf("filtro não pode ser nulo")
 	}
 
-	// Converte o map de filtro para bson.D
 	filter := s.mapToBsonD(f)
+	d["updatedAt"] = time.Now()
+	payload := bson.D{{Key: "$set", Value: d}}
 
-	d["updatedAt"] = time.Now().UTC()
-
-	// Cria o documento de atualização usando $set
-	u := bson.D{{Key: "$set", Value: d}}
-
-	// Executa o updateMany
-	result, err := s.coll.UpdateMany(ctx, filter, u)
+	result, err := s.coll.UpdateMany(ctx, filter, payload)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documentos: %w", err)
 	}
@@ -232,13 +215,10 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 	now := time.Now()
 	value := reflect.ValueOf(e).Elem()
 
-	if f != nil {
-		s.storeUpsertFilter = *f
+	if f == nil {
+		f = &s.storeUpsertFilter
 	}
 
-	if created := value.FieldByName("CreatedAt"); created.IsValid() {
-		created.Set(reflect.ValueOf(now))
-	}
 	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 		updated.Set(reflect.ValueOf(now))
 	}
@@ -249,16 +229,16 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 	}
 
 	var filterField any
-	if fieldValue := value.FieldByName(s.storeUpsertFilter.UpsertFieldKey); fieldValue.IsValid() {
+	if fieldValue := value.FieldByName(f.UpsertFieldKey); fieldValue.IsValid() {
 		filterField = fieldValue.Interface()
 	}
 
 	update := bson.M{
-		"$set":         s.removeIDToUpsert(e),
-		"$setOnInsert": bson.M{"_id": id},
+		"$set":         s.normalizeDocForUpsert(e),
+		"$setOnInsert": bson.M{"_id": id, "createdAt": now},
 	}
 
-	filter := bson.D{{Key: s.storeUpsertFilter.UpsertBsonKey, Value: filterField}}
+	filter := bson.D{{Key: f.UpsertBsonKey, Value: filterField}}
 	result, err := s.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documento: %w", err)
@@ -276,16 +256,13 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 	now := time.Now()
 	operations := make([]mongo.WriteModel, len(e))
 
-	if f != nil {
-		s.storeUpsertFilter = *f
+	if f == nil {
+		f = &s.storeUpsertFilter
 	}
 
 	for i, doc := range e {
 		value := reflect.ValueOf(&doc).Elem()
 
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			created.Set(reflect.ValueOf(now))
-		}
 		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 			updated.Set(reflect.ValueOf(now))
 		}
@@ -296,18 +273,18 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 		}
 		id := fieldValue.String()
 
-		fieldValue = value.FieldByName(s.storeUpsertFilter.UpsertFieldKey)
+		fieldValue = value.FieldByName(f.UpsertFieldKey)
 		if !fieldValue.IsValid() {
 			return nil, fmt.Errorf("invalid upset field name from %d", i)
 		}
 		filterField := fieldValue.Interface()
 
 		update := bson.M{
-			"$set":         s.removeIDToUpsert(doc),
-			"$setOnInsert": bson.M{"_id": id},
+			"$set":         s.normalizeDocForUpsert(doc),
+			"$setOnInsert": bson.M{"_id": id, "createdAt": now},
 		}
 
-		filter := bson.D{{Key: s.storeUpsertFilter.UpsertBsonKey, Value: filterField}}
+		filter := bson.D{{Key: f.UpsertBsonKey, Value: filterField}}
 		operations[i] = mongo.NewUpdateOneModel().
 			SetFilter(filter).
 			SetUpdate(update).
@@ -346,10 +323,7 @@ func (s *mongoStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*Dele
 		return nil, fmt.Errorf("filtro não pode ser nulo")
 	}
 
-	// Converte o map de filtro para bson.D
 	filter := s.mapToBsonD(f)
-
-	// Executa o updateMany
 	result, err := s.coll.DeleteMany(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao deletar documentos: %w", err)
@@ -370,10 +344,6 @@ func (s *mongoStore[T]) Has(ctx context.Context, id any) bool {
 
 // MapToBsonD converte um mapa genérico para bson.D
 func (s *mongoStore[T]) mapToBsonD(m map[string]any) bson.D {
-	if len(m) == 0 {
-		return bson.D{}
-	}
-
 	bsonD := bson.D{}
 	for key, value := range m {
 		bsonD = append(bsonD, bson.E{Key: key, Value: value})
@@ -382,16 +352,19 @@ func (s *mongoStore[T]) mapToBsonD(m map[string]any) bson.D {
 	return bsonD
 }
 
-func (s *mongoStore[T]) removeIDToUpsert(doc any) bson.M {
-	data, _ := bson.Marshal(doc)
-
-	var docWithoutID bson.M
-	err := bson.Unmarshal(data, &docWithoutID)
+func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
+	data, err := bson.Marshal(doc)
 	if err != nil {
 		return nil
 	}
 
-	delete(docWithoutID, "_id")
+	var normalized bson.M
+	if err = bson.Unmarshal(data, &normalized); err != nil {
+		return nil
+	}
 
-	return docWithoutID
+	delete(normalized, "_id")
+	delete(normalized, "createdAt")
+
+	return normalized
 }
