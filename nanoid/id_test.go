@@ -25,7 +25,7 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Executa várias vezes para garantir consistência
-			for i := 0; i < tt.runTimes; i++ {
+			for range tt.runTimes {
 				result := New()
 
 				// Verifica o tamanho
@@ -62,7 +62,7 @@ func TestNewTiny(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Executa várias vezes para garantir consistência
-			for i := 0; i < tt.runTimes; i++ {
+			for range tt.runTimes {
 				result := NewTiny()
 
 				// Verifica o tamanho
@@ -105,7 +105,7 @@ func TestUniqueness(t *testing.T) {
 			ids := make(map[string]bool)
 
 			// Gera vários IDs
-			for i := 0; i < tt.numIDs; i++ {
+			for range tt.numIDs {
 				id := tt.generator()
 
 				// Verifica se o ID já existe
@@ -123,13 +123,13 @@ func TestUniqueness(t *testing.T) {
 }
 
 func BenchmarkNew(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		New()
 	}
 }
 
 func BenchmarkNewTiny(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		NewTiny()
 	}
 }
