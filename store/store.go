@@ -84,8 +84,8 @@ type Store[T any] interface {
 	Update(ctx context.Context, e *T) (*T, error)
 	UpdateMany(ctx context.Context, f map[string]any, d map[string]any) (*UpdateResult, error)
 
-	Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*UpdateResult, error)
-	UpsertMany(ctx context.Context, e []T, f *StoreUpsertFilter) (*BulkWriteResult, error)
+	Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error)
+	UpsertMany(ctx context.Context, e []T, f []StoreUpsertFilter) (*BulkWriteResult, error)
 
 	Delete(ctx context.Context, id any) error
 	DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error)

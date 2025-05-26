@@ -357,7 +357,7 @@ func (s *SQLStore[T]) UpdateMany(ctx context.Context, f map[string]any, updates 
 }
 
 // Upsert cria ou atualiza um registro
-func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*UpdateResult, error) {
+func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
 	v := reflect.ValueOf(e).Elem()
 
 	// Verifica se existe campo updated_at
@@ -369,7 +369,15 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*
 	updates := make([]string, 0)
 	values := make([]any, 0)
 
-	upsertField := f.UpsertFieldKey
+	if len(f) == 0 {
+		f = []StoreUpsertFilter{
+			{
+				UpsertFieldKey: s.primaryKey,
+				UpsertBsonKey:  "ID",
+			},
+		}
+	}
+	upsertField := f[0].UpsertFieldKey // TODO: implementar upsert com multiplos campos de filtro
 	if upsertField == "" {
 		upsertField = s.primaryKey
 	}
@@ -438,7 +446,7 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*
 }
 
 // UpsertMany cria ou atualiza múltiplos registros
-func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f *StoreUpsertFilter) (*BulkWriteResult, error) {
+func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUpsertFilter) (*BulkWriteResult, error) {
 	if len(entities) == 0 {
 		return nil, nil
 	}

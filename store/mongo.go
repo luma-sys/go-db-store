@@ -16,20 +16,13 @@ import (
 )
 
 type mongoStore[T any] struct {
-	coll              *mongo.Collection
-	storeUpsertFilter StoreUpsertFilter
+	coll *mongo.Collection
 }
 
 // NewMongoStore cria um novo mongoStore
 func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
-	storeUpsertFilter := StoreUpsertFilter{
-		UpsertBsonKey:  "_id",
-		UpsertFieldKey: "ID",
-	}
-
 	return &mongoStore[T]{
-		coll:              coll,
-		storeUpsertFilter: storeUpsertFilter,
+		coll: coll,
 	}
 }
 
@@ -211,13 +204,9 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, f map[string]any, d map[
 	}, nil
 }
 
-func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) (*UpdateResult, error) {
+func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
 	now := time.Now()
 	value := reflect.ValueOf(e).Elem()
-
-	if f == nil {
-		f = &s.storeUpsertFilter
-	}
 
 	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
 		updated.Set(reflect.ValueOf(now))
@@ -228,9 +217,18 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 		id = fieldValue.String()
 	}
 
-	var filterField any
-	if fieldValue := value.FieldByName(f.UpsertFieldKey); fieldValue.IsValid() {
-		filterField = fieldValue.Interface()
+	if len(f) == 0 {
+		f = []StoreUpsertFilter{
+			{
+				UpsertFieldKey: "_id",
+				UpsertBsonKey:  "ID",
+			},
+		}
+	}
+
+	filter, err := s.convertStoreUpsertFilterToBsonD(value, f)
+	if err != nil {
+		return nil, err
 	}
 
 	update := bson.M{
@@ -238,7 +236,6 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 		"$setOnInsert": bson.M{"_id": id, "createdAt": now},
 	}
 
-	filter := bson.D{{Key: f.UpsertBsonKey, Value: filterField}}
 	result, err := s.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documento: %w", err)
@@ -252,13 +249,9 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f *StoreUpsertFilter) 
 	}, nil
 }
 
-func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFilter) (*BulkWriteResult, error) {
+func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFilter) (*BulkWriteResult, error) {
 	now := time.Now()
 	operations := make([]mongo.WriteModel, len(e))
-
-	if f == nil {
-		f = &s.storeUpsertFilter
-	}
 
 	for i, doc := range e {
 		value := reflect.ValueOf(&doc).Elem()
@@ -273,18 +266,25 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f *StoreUpsertFil
 		}
 		id := fieldValue.String()
 
-		fieldValue = value.FieldByName(f.UpsertFieldKey)
-		if !fieldValue.IsValid() {
-			return nil, fmt.Errorf("invalid upset field name from %d", i)
+		if len(f) == 0 {
+			f = []StoreUpsertFilter{
+				{
+					UpsertFieldKey: "_id",
+					UpsertBsonKey:  "ID",
+				},
+			}
 		}
-		filterField := fieldValue.Interface()
+
+		filter, err := s.convertStoreUpsertFilterToBsonD(value, f)
+		if err != nil {
+			return nil, err
+		}
 
 		update := bson.M{
 			"$set":         s.normalizeDocForUpsert(doc),
 			"$setOnInsert": bson.M{"_id": id, "createdAt": now},
 		}
 
-		filter := bson.D{{Key: f.UpsertBsonKey, Value: filterField}}
 		operations[i] = mongo.NewUpdateOneModel().
 			SetFilter(filter).
 			SetUpdate(update).
@@ -367,4 +367,19 @@ func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
 	delete(normalized, "createdAt")
 
 	return normalized
+}
+
+func (s *mongoStore[T]) convertStoreUpsertFilterToBsonD(value reflect.Value, filters []StoreUpsertFilter) (bson.D, error) {
+	var bsonD bson.D
+	for _, filter := range filters {
+		fieldValue := value.FieldByName(filter.UpsertBsonKey)
+		if !fieldValue.IsValid() {
+			return nil, fmt.Errorf("invalid upset field name from %s", filter.UpsertBsonKey)
+		}
+		filterField := fieldValue.Interface()
+
+		bsonD = append(bsonD, bson.E{Key: filter.UpsertBsonKey, Value: filterField})
+	}
+
+	return bsonD, nil
 }

@@ -634,7 +634,7 @@ func TestUpsert(t *testing.T) {
 				}
 			},
 			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, &StoreUpsertFilter{})
+				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
 			},
 			check: func(t *testing.T, e *YourEntityType) {
 				// Verifica se o registro foi inserido
@@ -659,7 +659,7 @@ func TestUpsert(t *testing.T) {
 				return entity
 			},
 			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, &StoreUpsertFilter{})
+				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
 			},
 			check: func(t *testing.T, e *YourEntityType) {
 				record, err := store.FindById(context.Background(), e.ID)
@@ -680,7 +680,7 @@ func TestUpsert(t *testing.T) {
 				return entity
 			},
 			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, &StoreUpsertFilter{})
+				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
 			},
 			check: func(t *testing.T, e *YourEntityType) {
 				record, err := store.FindById(context.Background(), e.ID)
@@ -697,8 +697,10 @@ func TestUpsert(t *testing.T) {
 				}
 			},
 			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, &StoreUpsertFilter{
-					UpsertFieldKey: "name",
+				return store.Upsert(context.Background(), e, []StoreUpsertFilter{
+					{
+						UpsertFieldKey: "name",
+					},
 				})
 			},
 			check: func(t *testing.T, e *YourEntityType) {
@@ -723,7 +725,7 @@ func TestUpsert(t *testing.T) {
 				return entity
 			},
 			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, &StoreUpsertFilter{})
+				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
 			},
 			check: func(t *testing.T, e *YourEntityType) {
 				record, err := store.FindById(context.Background(), e.ID)
