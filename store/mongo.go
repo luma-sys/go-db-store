@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/luma-sys/go-db-store/page"
@@ -369,16 +370,28 @@ func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
 	return normalized
 }
 
+func getFieldValue(key string, value reflect.Value) (any, error) {
+	for k := range strings.SplitSeq(key, ".") {
+		value = value.FieldByName(k)
+		if !value.IsValid() {
+			return nil, fmt.Errorf("invalid value")
+		}
+	}
+	return value.Interface(), nil
+}
+
 func (s *mongoStore[T]) convertStoreUpsertFilterToBsonD(value reflect.Value, filters []StoreUpsertFilter) (bson.D, error) {
 	var bsonD bson.D
 	for _, filter := range filters {
-		fieldValue := value.FieldByName(filter.UpsertBsonKey)
-		if !fieldValue.IsValid() {
-			return nil, fmt.Errorf("invalid upset field name from %s", filter.UpsertBsonKey)
+		fieldValue, err := getFieldValue(filter.UpsertFieldKey, value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid upset field name from %s", filter.UpsertFieldKey)
 		}
-		filterField := fieldValue.Interface()
 
-		bsonD = append(bsonD, bson.E{Key: filter.UpsertBsonKey, Value: filterField})
+		bsonD = append(bsonD, bson.E{
+			Key:   filter.UpsertBsonKey,
+			Value: fieldValue,
+		})
 	}
 
 	return bsonD, nil
