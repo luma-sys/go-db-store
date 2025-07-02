@@ -270,8 +270,8 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 		if len(f) == 0 {
 			f = []StoreUpsertFilter{
 				{
-					UpsertFieldKey: "_id",
-					UpsertBsonKey:  "ID",
+					UpsertFieldKey: "ID",
+					UpsertBsonKey:  "_id",
 				},
 			}
 		}
@@ -385,7 +385,7 @@ func (s *mongoStore[T]) convertStoreUpsertFilterToBsonD(value reflect.Value, fil
 	for _, filter := range filters {
 		fieldValue, err := getFieldValue(filter.UpsertFieldKey, value)
 		if err != nil {
-			return nil, fmt.Errorf("invalid upset field name from %s", filter.UpsertFieldKey)
+			return nil, fmt.Errorf("invalid upsert field name from %s", filter.UpsertFieldKey)
 		}
 
 		bsonD = append(bsonD, bson.E{
