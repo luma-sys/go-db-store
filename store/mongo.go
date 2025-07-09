@@ -156,6 +156,32 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 	return &InsertManyResult{InsertedIDs: result.InsertedIDs}, nil
 }
 
+// SaveMany salva vários documentos
+func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertManyResult, error) {
+	now := time.Now()
+
+	docs := make([]any, len(e))
+	for i, doc := range e {
+		value := reflect.ValueOf(&doc).Elem()
+
+		if created := value.FieldByName("CreatedAt"); created.IsValid() {
+			created.Set(reflect.ValueOf(now))
+		}
+		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
+			updated.Set(reflect.ValueOf(now))
+		}
+
+		docs[i] = doc
+	}
+
+	result, err := s.coll.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
+	if err != nil {
+		return nil, fmt.Errorf("erro ao criar documentos: %w", err)
+	}
+
+	return &InsertManyResult{InsertedIDs: result.InsertedIDs}, nil
+}
+
 // Update atualiza um documento
 func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	now := time.Now()
@@ -302,6 +328,8 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 		MatchedCount:  result.MatchedCount,
 		ModifiedCount: result.ModifiedCount,
 		DeletedCount:  result.DeletedCount,
+		UpsertedCount: result.UpsertedCount,
+		UpsertedIDs:   result.UpsertedIDs,
 	}, nil
 }
 
