@@ -235,8 +235,16 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter)
 	now := time.Now()
 	value := reflect.ValueOf(e).Elem()
 
+	if created := value.FieldByName("CreatedAt"); created.IsValid() {
+		if created.IsZero() {
+			created.Set(reflect.ValueOf(now))
+		}
+	}
+
 	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		updated.Set(reflect.ValueOf(now))
+		if updated.IsZero() {
+			updated.Set(reflect.ValueOf(now))
+		}
 	}
 
 	var id string
@@ -260,7 +268,7 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter)
 
 	update := bson.M{
 		"$set":         s.normalizeDocForUpsert(e),
-		"$setOnInsert": bson.M{"_id": id, "createdAt": now},
+		"$setOnInsert": bson.M{"_id": id},
 	}
 
 	result, err := s.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
@@ -283,8 +291,16 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 	for i, doc := range e {
 		value := reflect.ValueOf(&doc).Elem()
 
+		if created := value.FieldByName("CreatedAt"); created.IsValid() {
+			if created.IsZero() {
+				created.Set(reflect.ValueOf(now))
+			}
+		}
+
 		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			updated.Set(reflect.ValueOf(now))
+			if updated.IsZero() {
+				updated.Set(reflect.ValueOf(now))
+			}
 		}
 
 		fieldValue := value.FieldByName("ID")
@@ -309,7 +325,7 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 
 		update := bson.M{
 			"$set":         s.normalizeDocForUpsert(doc),
-			"$setOnInsert": bson.M{"_id": id, "createdAt": now},
+			"$setOnInsert": bson.M{"_id": id},
 		}
 
 		operations[i] = mongo.NewUpdateOneModel().
@@ -393,7 +409,6 @@ func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
 	}
 
 	delete(normalized, "_id")
-	delete(normalized, "createdAt")
 
 	return normalized
 }
