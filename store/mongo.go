@@ -148,7 +148,10 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 		docs[i] = doc
 	}
 
-	result, err := s.coll.InsertMany(ctx, docs)
+	opts := options.InsertMany()
+	opts.SetOrdered(false)
+
+	result, err := s.coll.InsertMany(ctx, docs, opts)
 	if err != nil {
 		if result != nil {
 			return &InsertManyResult{InsertedIDs: result.InsertedIDs}, fmt.Errorf("erro ao criar documentos: %w", err)
