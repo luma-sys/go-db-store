@@ -29,10 +29,7 @@ func New[T any](items []T, page, limit, totalItems int64) *Page[T] {
 		items = []T{}
 	}
 
-	totalPages := 0
-	if len(items) > 0 {
-		totalPages = int(math.Ceil(float64(totalItems) / float64(limit)))
-	}
+	totalPages := CalculateTotalPages(totalItems, limit)
 
 	meta := PageMeta{
 		TotalItems:   int(totalItems),
@@ -93,4 +90,12 @@ func NewCursor[T any](items []T, limit int64, next func(item T) string) *Cursor[
 // Skip retorna o offset para a paginação
 func Skip(page, limit int64) int64 {
 	return (page - 1) * limit
+}
+
+func CalculateTotalPages(count, limit int64) int {
+	if limit == 0 {
+		return 0
+	}
+
+	return int(math.Ceil(float64(count) / float64(limit)))
 }

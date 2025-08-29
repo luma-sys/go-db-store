@@ -165,6 +165,42 @@ func TestNewCursor(t *testing.T) {
 	}
 }
 
+func TestCalculateTotalPages(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int64
+		limit int64
+		want  int
+	}{
+		{
+			name:  "deve calcular quantidade de páginas",
+			count: 140,
+			limit: 10,
+			want:  14,
+		},
+		{
+			name:  "deve calcular 2 quantidade de páginas",
+			count: 140,
+			limit: 100,
+			want:  2,
+		},
+		{
+			name:  "deve retornar 0 quantidade de páginas quando não houver limite",
+			count: 140,
+			limit: 0,
+			want:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CalculateTotalPages(tt.count, tt.limit); got != tt.want {
+				t.Errorf("Skip() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // Funções auxiliares para comparação
 func comparePage[T any](a, b *Page[T]) bool {
 	if len(a.Items) != len(b.Items) {
