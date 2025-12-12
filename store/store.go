@@ -50,7 +50,7 @@ type DeleteResult struct {
 
 type FindOptions struct {
 	Page    int64
-	Limit   int64 // the 0 value of limit meens the will return all items
+	Limit   int64 // the 0 value of limit means the will return all items
 	OrderBy string
 	SortBy  string
 }

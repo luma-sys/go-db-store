@@ -47,6 +47,9 @@ func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn Transaction) (an
 // FindAll recupera documentos com paginação e filtros
 func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
 	opts.Initialize()
+	if opts.SortBy == "id" {
+		opts.SortBy = "_id"
+	}
 
 	// Usando o filtro fornecido ou um filtro vazio se nenhum for fornecido
 	filter := s.mapToBsonD(f)

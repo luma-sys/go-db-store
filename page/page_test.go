@@ -207,9 +207,7 @@ func comparePage[T any](a, b *Page[T]) bool {
 		return false
 	}
 
-	meta := a.Meta == b.Meta
-
-	return meta
+	return a.Meta == b.Meta
 }
 
 func compareCursor[T any](a, b *Cursor[T]) bool {
