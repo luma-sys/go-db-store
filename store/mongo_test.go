@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +32,94 @@ type TestEntityWithoutTimestamps struct {
 	Name string `bson:"name"`
 }
 
+// getMongoDownloadURL retorna a URL de download do MongoDB baseado no sistema operacional
+//
+// Esta função detecta automaticamente o sistema operacional e retorna a URL apropriada
+// para download do MongoDB. Suporta:
+//   - macOS
+//   - Alpine Linux (containers Docker)
+//   - Arch Linux
+//   - RedHat / CentOS 8.0+
+//   - SUSE Linux Enterprise Server
+//   - Ubuntu 24.04 / 22.04
+//   - Debian
+//   - Outros sistemas Linux (usa Ubuntu 22.04 como fallback)
+//
+// Para CI/CD ou ambientes específicos, você pode sobrescrever a URL usando a variável
+// de ambiente MONGODB_DOWNLOAD_URL. Exemplos:
+//
+//	export MONGODB_DOWNLOAD_URL="https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2404-7.0.14.tgz"
+//	go test ./store
+//
+// URLs disponíveis em: https://www.mongodb.com/download-center/community/releases/archive
+func getMongoDownloadURL(version string) string {
+	// Permite override via variável de ambiente para CI/CD
+	if customURL := os.Getenv("MONGODB_DOWNLOAD_URL"); customURL != "" {
+		return customURL
+	}
+
+	// Detecta o sistema operacional
+	if runtime.GOOS == "darwin" {
+		// macOS
+		return fmt.Sprintf("https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-%s.tgz", version)
+	}
+
+	if runtime.GOOS == "linux" {
+		// Tenta detectar a distribuição Linux
+		if data, err := os.ReadFile("/etc/os-release"); err == nil {
+			content := string(data)
+
+			// Alpine Linux (comum em containers Docker)
+			if strings.Contains(content, "Alpine") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-%s.tgz", version)
+			}
+
+			// Arch Linux
+			if strings.Contains(content, "Arch Linux") || strings.Contains(content, "arch") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-%s.tgz", version)
+			}
+
+			// RedHat / CentOS 8.0+
+			if strings.Contains(content, "Red Hat") || strings.Contains(content, "CentOS") || strings.Contains(content, "rhel") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-rhel80-%s.tgz", version)
+			}
+
+			// SUSE Linux Enterprise Server
+			if strings.Contains(content, "SUSE") || strings.Contains(content, "sles") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-suse15-%s.tgz", version)
+			}
+
+			// Ubuntu 24.04
+			if strings.Contains(content, "Ubuntu") && strings.Contains(content, "24.04") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2404-%s.tgz", version)
+			}
+
+			// Ubuntu 22.04 (ou similar como Zorin OS 18)
+			if strings.Contains(content, "Ubuntu") || strings.Contains(content, "Zorin") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-%s.tgz", version)
+			}
+
+			// Debian
+			if strings.Contains(content, "Debian") {
+				return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian12-%s.tgz", version)
+			}
+		}
+
+		// Padrão para Linux genérico: usa Ubuntu 22.04 (mais compatível)
+		return fmt.Sprintf("https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-%s.tgz", version)
+	}
+
+	// Windows ou outros
+	return ""
+}
+
 func setupMongoTest(t *testing.T) (*mongo.Collection, func()) {
-	mongoServer, err := memongo.Start("4.0.5")
+	memopts := &memongo.Options{
+		MongoVersion:   "7.0.14",
+		DownloadURL:    getMongoDownloadURL("7.0.14"),
+		StartupTimeout: 120 * time.Second,
+	}
+	mongoServer, err := memongo.StartWithOptions(memopts)
 	if err != nil {
 		t.Fatalf("Erro ao iniciar MongoDB em memória: %v", err)
 	}

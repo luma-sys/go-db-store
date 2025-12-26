@@ -187,9 +187,6 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 		strings.Join(placeholders, ", "),
 	)
 
-	fmt.Printf("Query %v", query)
-	fmt.Printf("values %v", values)
-
 	result, err := s.db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return nil, err

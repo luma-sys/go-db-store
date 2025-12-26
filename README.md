@@ -81,6 +81,8 @@ func SomeService(ctx context.Context, db *sql.DB) {
 
 ## Tests coverage
 
+To execute unit test by Docker access this [documentation](DOCKER_TESTS.md).
+
 ### MongoDB tests coverage
 
 | Function               | Tested Scenarios                                                                                                                          |

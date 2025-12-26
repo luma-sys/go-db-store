@@ -295,8 +295,8 @@ func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter)
 	if len(f) == 0 {
 		f = []StoreUpsertFilter{
 			{
-				UpsertFieldKey: "_id",
-				UpsertBsonKey:  "ID",
+				UpsertFieldKey: "ID",
+				UpsertBsonKey:  "_id",
 			},
 		}
 	}
