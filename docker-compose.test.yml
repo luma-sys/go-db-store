@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      # Monta o código para desenvolvimento (opcional)
+      - .:/app
+      # Cache do Go modules
+      - go-modules:/go/pkg/mod
+    environment:
+      # Configurações de teste
+      - CGO_ENABLED=1
+      - MONGODB_DOWNLOAD_URL=${MONGODB_DOWNLOAD_URL:-}
+    command: go test -v ./... -timeout 300s
+
+volumes:
+  go-modules:

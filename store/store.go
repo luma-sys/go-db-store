@@ -20,6 +20,11 @@ type StoreUpsertFilter struct {
 	UpsertBsonKey  string
 }
 
+type EntityFieldsToUpdate struct {
+	Filter map[string]any `json:"filter"`
+	Fields map[string]any `json:"fields"`
+}
+
 type BulkWriteResult struct {
 	InsertedCount int64
 	MatchedCount  int64
@@ -45,7 +50,7 @@ type UpdateResult struct {
 }
 
 type DeleteResult struct {
-	DeletedCount int64 `bson:"n"`
+	DeletedCount int64
 }
 
 type FindOptions struct {
@@ -80,9 +85,10 @@ type Store[T any] interface {
 
 	Save(ctx context.Context, e *T) (*T, error)
 	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error)
+	SaveManyNotOrdered(ctx context.Context, e []T) (*InsertManyResult, error)
 
 	Update(ctx context.Context, e *T) (*T, error)
-	UpdateMany(ctx context.Context, f map[string]any, d map[string]any) (*UpdateResult, error)
+	UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate) (*BulkWriteResult, error)
 
 	Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error)
 	UpsertMany(ctx context.Context, e []T, f []StoreUpsertFilter) (*BulkWriteResult, error)
