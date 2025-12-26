@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"time"
@@ -165,7 +166,7 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 	return &InsertManyResult{InsertedIDs: result.InsertedIDs}, nil
 }
 
-// SaveMany salva vários documentos
+// SaveManyNotOrdered salva vários documentos de forma desordenada
 func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertManyResult, error) {
 	now := time.Now()
 
@@ -217,26 +218,56 @@ func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	return &updated, nil
 }
 
-// UpdateMany atualiza múltiplos documentos baseado em um filtro genérico
-func (s *mongoStore[T]) UpdateMany(ctx context.Context, f map[string]any, d map[string]any) (*UpdateResult, error) {
-	if f == nil {
-		return nil, fmt.Errorf("filtro não pode ser nulo")
+// UpdateMany atualiza atributos de múltiplos documentos baseado em um filtro
+func (s *mongoStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate) (*BulkWriteResult, error) {
+	if len(fd) == 0 {
+		return nil, fmt.Errorf("nenhum update fornecido")
 	}
 
-	filter := s.mapToBsonD(f)
-	d["updatedAt"] = time.Now()
-	payload := bson.D{{Key: "$set", Value: d}}
+	now := time.Now()
+	operations := make([]mongo.WriteModel, len(fd))
 
-	result, err := s.coll.UpdateMany(ctx, filter, payload)
+	for i, fb := range fd {
+		if len(fb.Filter) == 0 {
+			return nil, fmt.Errorf("filtro é obrigatório para update %d", i)
+		}
+
+		// Constrói o filtro dinamicamente
+		filter := bson.M{}
+		maps.Copy(filter, fb.Filter)
+
+		// Constrói o $set com os campos fornecidos
+		setFields := bson.M{
+			"updatedAt": now,
+		}
+
+		// Adiciona todos os campos do map
+		maps.Copy(setFields, fb.Fields)
+
+		pipeline := mongo.Pipeline{
+			{
+				{Key: "$set", Value: setFields},
+			},
+		}
+
+		operations[i] = mongo.NewUpdateManyModel().
+			SetFilter(filter).
+			SetUpdate(pipeline).
+			SetUpsert(false)
+	}
+
+	result, err := s.coll.BulkWrite(ctx, operations)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documentos: %w", err)
 	}
 
-	return &UpdateResult{
+	return &BulkWriteResult{
+		InsertedCount: result.InsertedCount,
 		MatchedCount:  result.MatchedCount,
 		ModifiedCount: result.ModifiedCount,
+		DeletedCount:  result.DeletedCount,
 		UpsertedCount: result.UpsertedCount,
-		UpsertedID:    result.UpsertedID,
+		UpsertedIDs:   result.UpsertedIDs,
 	}, nil
 }
 
