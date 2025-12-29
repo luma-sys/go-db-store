@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,25 +13,40 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type YourEntityType struct {
+type TestSQLEntity struct {
 	ID        int       `db:"id" json:"id"`
 	Name      string    `db:"name" json:"name"`
+	Age       int       `db:"age" json:"age"`
+	Active    bool      `db:"active" json:"active"`
+	Score     float64   `db:"score" json:"score"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-func setupDB() (*sql.DB, error) {
-	// Setup
+type TestSQLEntityWithoutTimestamps struct {
+	ID   int    `db:"id" json:"id"`
+	Name string `db:"name" json:"name"`
+}
+
+type TestSQLEntityWithIgnoredField struct {
+	ID      int    `db:"id" json:"id"`
+	Name    string `db:"name" json:"name"`
+	Ignored string `db:"-" json:"-"`
+}
+
+func setupSQLDB() (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		return nil, errors.New("erro ao abrir conexão com SQLite: " + err.Error())
 	}
 
-	// Criar tabelas para o teste
 	_, err = db.Exec(`
-		CREATE TABLE your_table_name (
+		CREATE TABLE test_entities (
 			id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
+			age INTEGER DEFAULT 0,
+			active BOOLEAN DEFAULT false,
+			score REAL DEFAULT 0.0,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
@@ -42,343 +58,408 @@ func setupDB() (*sql.DB, error) {
 	return db, nil
 }
 
-// TestHas verifica se um registro existe pelo ID
-func TestHas(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+func setupSQLDBWithoutTimestamps() (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
-		t.Fatal(err)
+		return nil, errors.New("erro ao abrir conexão com SQLite: " + err.Error())
 	}
-	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
-	// Teste de inserção
-	_, _ = store.Save(context.Background(), &YourEntityType{ID: 1, Name: "John"})
+	_, err = db.Exec(`
+		CREATE TABLE simple_entities (
+			id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL
+		);
+	`)
+	if err != nil {
+		return nil, errors.New("erro ao criar tabela: " + err.Error())
+	}
 
-	// Teste se o registro existe
-	exists := store.Has(context.Background(), 1)
-	assert.True(t, exists)
-
-	// Teste se um ID inexistente retorna false
-	exists = store.Has(context.Background(), 2)
-	assert.False(t, exists)
+	return db, nil
 }
 
-// TestCount retorna o número de registros baseado em uma consulta
-func TestCount(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+// ==================== TESTES SAVE ====================
+
+func TestSQLSave(t *testing.T) {
+	db, err := setupSQLDB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
-	_, _ = store.Save(context.Background(), &YourEntityType{ID: 1, Name: "John"})
-	_, _ = store.Save(context.Background(), &YourEntityType{ID: 2, Name: "Jane"})
 
-	// Teste de contagem
-	count, err := store.Count(context.Background(), map[string]any{})
-	assert.NoError(t, err)
-	assert.Equal(t, int64(2), *count)
-}
-
-func TestFindById(t *testing.T) {
-	// Setup
-	db, err := setupDB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
-
-	now := time.Now()
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
 
 	tests := []struct {
 		name    string
-		setup   func() *YourEntityType
-		id      any
-		want    func(*testing.T, *YourEntityType)
-		wantErr bool
-	}{
-		{
-			name: "deve encontrar registro existente",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        1,
-					Name:      "Registro Teste",
-					CreatedAt: now,
-					UpdatedAt: now,
-				}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			id: 1,
-			want: func(t *testing.T, got *YourEntityType) {
-				assert.Equal(t, 1, got.ID)
-				assert.Equal(t, "Registro Teste", got.Name)
-				assert.Equal(t, now.UTC().Format("2006-01-02 15:04:05"),
-					got.CreatedAt.UTC().Format("2006-01-02 15:04:05"))
-			},
-			wantErr: false,
-		},
-		{
-			name: "deve retornar erro para registro inexistente",
-			setup: func() *YourEntityType {
-				return nil
-			},
-			id:      999,
-			want:    nil,
-			wantErr: true,
-		},
-		{
-			name: "deve encontrar registro com campos nulos",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:   2,
-					Name: "",
-				}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			id: 2,
-			want: func(t *testing.T, got *YourEntityType) {
-				assert.Equal(t, 2, got.ID)
-				assert.Equal(t, "", got.Name)
-			},
-			wantErr: false,
-		},
-		{
-			name: "deve manter tipos de dados corretos",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        3,
-					Name:      "Test Types",
-					CreatedAt: now,
-					UpdatedAt: now,
-				}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			id: 3,
-			want: func(t *testing.T, got *YourEntityType) {
-				assert.IsType(t, 0, got.ID)
-				assert.IsType(t, "", got.Name)
-				assert.IsType(t, time.Time{}, got.CreatedAt)
-				assert.IsType(t, time.Time{}, got.UpdatedAt)
-			},
-			wantErr: false,
-		},
-		{
-			name: "deve retornar erro para ID inválido",
-			setup: func() *YourEntityType {
-				return nil
-			},
-			id:      "invalid_id",
-			want:    nil,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Executa setup
-			expected := tt.setup()
-
-			// Executa FindById
-			got, err := store.FindById(context.Background(), tt.id)
-
-			// Verifica erro
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, got)
-				return
-			}
-
-			// Verifica sucesso
-			assert.NoError(t, err)
-			assert.NotNil(t, got)
-
-			// Executa verificações específicas
-			if tt.want != nil {
-				tt.want(t, got)
-			}
-
-			// Se tiver registro esperado, compara com o obtido
-			if expected != nil {
-				assert.Equal(t, expected.ID, got.ID)
-				assert.Equal(t, expected.Name, got.Name)
-				assert.Equal(t, expected.CreatedAt.UTC().Format("2006-01-02 15:04:05"),
-					got.CreatedAt.UTC().Format("2006-01-02 15:04:05"))
-				assert.Equal(t, expected.UpdatedAt.UTC().Format("2006-01-02 15:04:05"),
-					got.UpdatedAt.UTC().Format("2006-01-02 15:04:05"))
-			}
-		})
-	}
-}
-
-func TestSave(t *testing.T) {
-	// Setup
-	db, err := setupDB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
-
-	now := time.Now()
-
-	tests := []struct {
-		name    string
-		input   *YourEntityType
-		check   func(*testing.T, *YourEntityType)
+		input   *TestSQLEntity
+		check   func(*testing.T, *TestSQLEntity)
 		wantErr bool
 	}{
 		{
 			name: "deve salvar registro com todos os campos",
-			input: &YourEntityType{
-				ID:        2,
-				Name:      "Teste Completo",
-				CreatedAt: now,
-				UpdatedAt: now,
+			input: &TestSQLEntity{
+				Name:   "João Silva",
+				Age:    30,
+				Active: true,
+				Score:  95.5,
 			},
-			check: func(t *testing.T, result *YourEntityType) {
-				assert.Equal(t, 2, result.ID)
-				assert.Equal(t, "Teste Completo", result.Name)
-				assert.NotZero(t, result.CreatedAt)
-				assert.NotZero(t, result.UpdatedAt)
-
-				// Verifica se o registro foi realmente salvo no banco
-				saved, err := store.FindById(context.Background(), result.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, result.ID, saved.ID)
-				assert.Equal(t, result.Name, saved.Name)
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.NotZero(t, result.ID)
+				assert.Equal(t, "João Silva", result.Name)
+				assert.Equal(t, 30, result.Age)
+				assert.True(t, result.Active)
+				assert.Equal(t, 95.5, result.Score)
+			},
+		},
+		{
+			name: "deve gerar ID automaticamente",
+			input: &TestSQLEntity{
+				Name: "Maria Santos",
+				Age:  25,
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.NotZero(t, result.ID)
+				assert.Greater(t, result.ID, 0)
 			},
 		},
 		{
 			name: "deve salvar registro com campos mínimos",
-			input: &YourEntityType{
+			input: &TestSQLEntity{
 				Name: "Campos Mínimos",
 			},
-			check: func(t *testing.T, result *YourEntityType) {
-				assert.NotNil(t, result.ID)
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.NotZero(t, result.ID)
 				assert.Equal(t, "Campos Mínimos", result.Name)
-				assert.NotNil(t, result.CreatedAt)
-				assert.NotNil(t, result.UpdatedAt)
-			},
-		},
-		{
-			name: "deve gerar ID automático",
-			input: &YourEntityType{
-				Name: "ID Automático",
-			},
-			check: func(t *testing.T, result *YourEntityType) {
-				assert.NotNil(t, result.ID)
-				count, err := store.Count(context.Background(), map[string]any{"id": result.ID})
-				assert.NoError(t, err)
-				assert.Equal(t, int64(1), *count)
+				assert.Zero(t, result.Age)
+				assert.False(t, result.Active)
 			},
 		},
 		{
 			name: "deve salvar registro com string vazia",
-			input: &YourEntityType{
+			input: &TestSQLEntity{
 				Name: "",
 			},
-			check: func(t *testing.T, result *YourEntityType) {
+			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.NotZero(t, result.ID)
 				assert.Empty(t, result.Name)
 			},
 		},
 		{
-			name: "deve manter tipos de dados corretos",
-			input: &YourEntityType{
-				ID:        123,
-				Name:      "Teste Tipos",
-				CreatedAt: now,
-				UpdatedAt: now,
+			name: "deve salvar registro com valores negativos",
+			input: &TestSQLEntity{
+				Name:  "Valores Negativos",
+				Age:   -1,
+				Score: -50.5,
 			},
-			check: func(t *testing.T, result *YourEntityType) {
-				assert.IsType(t, 0, result.ID)
-				assert.IsType(t, "", result.Name)
-				assert.IsType(t, time.Time{}, result.CreatedAt)
-				assert.IsType(t, time.Time{}, result.UpdatedAt)
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, -1, result.Age)
+				assert.Equal(t, -50.5, result.Score)
 			},
 		},
-		// Para esse cenário, o bando não deve ser auto incrementado
-		//{
-		//	name: "deve verificar unicidade de ID",
-		//	input: &YourEntityType{
-		//		ID:   1, // ID já utilizado no primeiro teste
-		//		Name: "Teste Duplicado",
-		//	},
-		//	wantErr: true,
-		//},
 		{
-			name: "deve lidar com timestamps diferentes",
-			input: &YourEntityType{
-				Name:      "Teste Timestamps",
-				CreatedAt: now.Add(-24 * time.Hour),
-				UpdatedAt: now.Add(-12 * time.Hour),
+			name: "deve salvar registro com valores zero",
+			input: &TestSQLEntity{
+				Name:   "Valores Zero",
+				Age:    0,
+				Score:  0.0,
+				Active: false,
 			},
-			check: func(t *testing.T, result *YourEntityType) {
-				assert.NotEqual(t, result.CreatedAt, result.UpdatedAt)
-				assert.True(t, result.UpdatedAt.After(result.CreatedAt))
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Zero(t, result.Age)
+				assert.Zero(t, result.Score)
+				assert.False(t, result.Active)
+			},
+		},
+		{
+			name: "deve salvar registro com valores grandes",
+			input: &TestSQLEntity{
+				Name:  "Valores Grandes",
+				Age:   2147483647,
+				Score: 1.7976931348623157e+100,
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, 2147483647, result.Age)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Executa Save
-			_, _ = store.Save(context.Background(), &YourEntityType{ID: 1, Name: "John"})
-			result, err := store.Save(context.Background(), tt.input)
+			result, err := store.Save(ctx, tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
 			}
 
-			// Verifica sucesso
 			assert.NoError(t, err)
 			assert.NotNil(t, result)
 
-			// Executa verificações específicas
 			if tt.check != nil {
 				tt.check(t, result)
 			}
 
-			// Verifica se o registro existe no banco
-			if !tt.wantErr {
-				exists := store.Has(context.Background(), result.ID)
-				assert.True(t, exists)
+			// Verifica persistência
+			found, err := store.FindById(ctx, result.ID)
+			assert.NoError(t, err)
+			assert.Equal(t, result.ID, found.ID)
+		})
+	}
+}
+
+func TestSQLSave_WithoutAutoincrement(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE manual_id_entities (
+			id INTEGER NOT NULL PRIMARY KEY,
+			name TEXT NOT NULL
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLStore[TestSQLEntityWithoutTimestamps](db, enum.DatabaseDriverSqlite, "manual_id_entities", "id", false)
+	ctx := context.Background()
+
+	entity := &TestSQLEntityWithoutTimestamps{
+		ID:   100,
+		Name: "ID Manual",
+	}
+
+	result, err := store.Save(ctx, entity)
+	assert.NoError(t, err)
+	assert.Equal(t, 100, result.ID)
+
+	found, err := store.FindById(ctx, 100)
+	assert.NoError(t, err)
+	assert.Equal(t, "ID Manual", found.Name)
+}
+
+func TestSQLSave_IgnoredFields(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE ignored_field_entities (
+			id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLStore[TestSQLEntityWithIgnoredField](db, enum.DatabaseDriverSqlite, "ignored_field_entities", "id", true)
+	ctx := context.Background()
+
+	entity := &TestSQLEntityWithIgnoredField{
+		Name:    "Com Campo Ignorado",
+		Ignored: "Este campo não deve ser salvo",
+	}
+
+	result, err := store.Save(ctx, entity)
+	assert.NoError(t, err)
+	assert.NotZero(t, result.ID)
+}
+
+// ==================== TESTES SAVE MANY ====================
+
+func TestSQLSaveMany(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		input   []TestSQLEntity
+		check   func(*testing.T, *InsertManyResult)
+		wantErr bool
+	}{
+		{
+			name: "deve salvar múltiplos registros",
+			input: []TestSQLEntity{
+				{Name: "João", Age: 25},
+				{Name: "Maria", Age: 30},
+				{Name: "Pedro", Age: 35},
+			},
+			check: func(t *testing.T, result *InsertManyResult) {
+				assert.Equal(t, 3, len(result.InsertedIDs))
+			},
+		},
+		{
+			name: "deve salvar um único registro",
+			input: []TestSQLEntity{
+				{Name: "Único", Age: 40},
+			},
+			check: func(t *testing.T, result *InsertManyResult) {
+				assert.Equal(t, 1, len(result.InsertedIDs))
+			},
+		},
+		{
+			name:  "deve retornar nil para slice vazio",
+			input: []TestSQLEntity{},
+			check: func(t *testing.T, result *InsertManyResult) {
+				assert.Nil(t, result)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Limpa a tabela
+			db.Exec("DELETE FROM test_entities")
+
+			result, err := store.SaveMany(ctx, tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+
+			// Verifica contagem
+			if len(tt.input) > 0 {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(len(tt.input)), *count)
 			}
 		})
 	}
 }
 
-func TestFindAll(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+// ==================== TESTES SAVE MANY NOT ORDERED ====================
+
+func TestSQLSaveManyNotOrdered(t *testing.T) {
+	db, err := setupSQLDB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
-	// Preparar dados de teste
-	testData := []YourEntityType{
-		{ID: 1, Name: "João"},
-		{ID: 2, Name: "Maria"},
-		{ID: 3, Name: "Pedro"},
-		{ID: 4, Name: "Ana"},
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	entities := []TestSQLEntity{
+		{Name: "Doc 1"},
+		{Name: "Doc 2"},
 	}
 
-	// Inserir dados de teste
-	for _, entity := range testData {
-		_, err := store.Save(context.Background(), &entity)
-		assert.NoError(t, err)
+	result, err := store.SaveManyNotOrdered(ctx, entities)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "not implemented")
+}
+
+// ==================== TESTES FIND BY ID ====================
+
+func TestSQLFindById(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup: salva registros de teste
+	testDoc := &TestSQLEntity{
+		Name:   "Documento Teste",
+		Age:    25,
+		Active: true,
+		Score:  88.5,
+	}
+	saved, _ := store.Save(ctx, testDoc)
+
+	tests := []struct {
+		name    string
+		id      any
+		check   func(*testing.T, *TestSQLEntity)
+		wantErr bool
+	}{
+		{
+			name: "deve encontrar registro existente",
+			id:   saved.ID,
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, saved.ID, result.ID)
+				assert.Equal(t, "Documento Teste", result.Name)
+				assert.Equal(t, 25, result.Age)
+				assert.True(t, result.Active)
+				assert.Equal(t, 88.5, result.Score)
+			},
+		},
+		{
+			name:    "deve retornar erro para ID inexistente",
+			id:      99999,
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro para ID zero",
+			id:      0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := store.FindById(ctx, tt.id)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+// ==================== TESTES FIND ALL ====================
+
+func TestSQLFindAll(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup: salva registros de teste
+	testDocs := []TestSQLEntity{
+		{Name: "João", Age: 25, Active: true, Score: 80},
+		{Name: "Maria", Age: 30, Active: true, Score: 90},
+		{Name: "Pedro", Age: 35, Active: false, Score: 70},
+		{Name: "Ana", Age: 28, Active: true, Score: 85},
+		{Name: "Carlos", Age: 40, Active: false, Score: 75},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
 	}
 
 	tests := []struct {
@@ -386,87 +467,197 @@ func TestFindAll(t *testing.T) {
 		filter  map[string]any
 		opts    FindOptions
 		wantLen int
+		check   func(*testing.T, []TestSQLEntity)
 		wantErr bool
-		checkFn func(t *testing.T, results []YourEntityType)
 	}{
 		{
 			name:    "deve retornar todos os registros sem filtro",
+			filter:  nil,
+			opts:    FindOptions{},
+			wantLen: 5,
+		},
+		{
+			name:    "deve retornar todos com filtro vazio",
 			filter:  map[string]any{},
 			opts:    FindOptions{},
-			wantLen: 4,
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 4, len(results))
-				assert.Equal(t, "João", results[0].Name)
+			wantLen: 5,
+		},
+		{
+			name:    "deve filtrar por campo booleano true",
+			filter:  map[string]any{"active": true},
+			opts:    FindOptions{},
+			wantLen: 3,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.True(t, r.Active)
+				}
 			},
 		},
 		{
-			name: "deve retornar registros filtrados por nome",
-			filter: map[string]any{
-				"name": "João",
+			name:    "deve filtrar por campo booleano false",
+			filter:  map[string]any{"active": false},
+			opts:    FindOptions{},
+			wantLen: 2,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.False(t, r.Active)
+				}
 			},
+		},
+		{
+			name:    "deve filtrar por campo string",
+			filter:  map[string]any{"name": "João"},
 			opts:    FindOptions{},
 			wantLen: 1,
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 1, len(results))
+			check: func(t *testing.T, results []TestSQLEntity) {
 				assert.Equal(t, "João", results[0].Name)
 			},
 		},
 		{
-			name:   "deve retornar registros com paginação",
-			filter: map[string]any{},
-			opts: FindOptions{
-				Page:  1,
-				Limit: 2,
-			},
+			name:    "deve usar operador __gt",
+			filter:  map[string]any{"age__gt": 30},
+			opts:    FindOptions{},
 			wantLen: 2,
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 2, len(results))
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.Greater(t, r.Age, 30)
+				}
 			},
 		},
 		{
-			name: "deve retornar registros com like",
-			filter: map[string]any{
-				"name__like": "%a%",
-			},
+			name:    "deve usar operador __gte",
+			filter:  map[string]any{"age__gte": 30},
 			opts:    FindOptions{},
-			wantLen: 2, // Maria e Ana
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 2, len(results))
+			wantLen: 3,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.GreaterOrEqual(t, r.Age, 30)
+				}
+			},
+		},
+		{
+			name:    "deve usar operador __lt",
+			filter:  map[string]any{"age__lt": 30},
+			opts:    FindOptions{},
+			wantLen: 2,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.Less(t, r.Age, 30)
+				}
+			},
+		},
+		{
+			name:    "deve usar operador __lte",
+			filter:  map[string]any{"age__lte": 30},
+			opts:    FindOptions{},
+			wantLen: 3,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.LessOrEqual(t, r.Age, 30)
+				}
+			},
+		},
+		{
+			name:    "deve usar operador __like",
+			filter:  map[string]any{"name__like": "%a%"},
+			opts:    FindOptions{},
+			wantLen: 3, // Maria, Ana, Carlos
+			check: func(t *testing.T, results []TestSQLEntity) {
 				for _, r := range results {
 					assert.Contains(t, r.Name, "a")
 				}
 			},
 		},
 		{
-			name: "deve retornar registros com in",
-			filter: map[string]any{
-				"id__in": []int{1, 2},
-			},
+			name:    "deve usar operador __like no início",
+			filter:  map[string]any{"name__like": "M%"},
 			opts:    FindOptions{},
-			wantLen: 2,
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 2, len(results))
-				ids := []int{results[0].ID, results[1].ID}
-				assert.Contains(t, ids, 1)
-				assert.Contains(t, ids, 2)
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "Maria", results[0].Name)
 			},
 		},
 		{
-			name: "deve retornar vazio quando não encontrar registros",
-			filter: map[string]any{
-				"name": "NãoExiste",
+			name:    "deve usar operador __not_like",
+			filter:  map[string]any{"name__not_like": "%a%"},
+			opts:    FindOptions{},
+			wantLen: 2, // João, Pedro
+		},
+		{
+			name:    "deve usar operador __not",
+			filter:  map[string]any{"name__not": "João"},
+			opts:    FindOptions{},
+			wantLen: 4,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.NotEqual(t, "João", r.Name)
+				}
 			},
+		},
+		{
+			name:    "deve usar operador __in com []int",
+			filter:  map[string]any{"age__in": []int{25, 30}},
+			opts:    FindOptions{},
+			wantLen: 2,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.True(t, r.Age == 25 || r.Age == 30)
+				}
+			},
+		},
+		{
+			name:    "deve usar operador __in com []string",
+			filter:  map[string]any{"name__in": []string{"João", "Maria"}},
+			opts:    FindOptions{},
+			wantLen: 2,
+		},
+		{
+			name:    "deve combinar múltiplos filtros",
+			filter:  map[string]any{"active": true, "age__gte": 28},
+			opts:    FindOptions{},
+			wantLen: 2, // Maria (30, active) e Ana (28, active)
+			check: func(t *testing.T, results []TestSQLEntity) {
+				for _, r := range results {
+					assert.True(t, r.Active)
+					assert.GreaterOrEqual(t, r.Age, 28)
+				}
+			},
+		},
+		{
+			name:    "deve aplicar paginação - página 1",
+			filter:  nil,
+			opts:    FindOptions{Page: 1, Limit: 2},
+			wantLen: 2,
+		},
+		{
+			name:    "deve aplicar paginação - página 2",
+			filter:  nil,
+			opts:    FindOptions{Page: 2, Limit: 2},
+			wantLen: 2,
+		},
+		{
+			name:    "deve aplicar paginação - página 3",
+			filter:  nil,
+			opts:    FindOptions{Page: 3, Limit: 2},
+			wantLen: 1,
+		},
+		{
+			name:    "deve retornar vazio quando filtro não encontra",
+			filter:  map[string]any{"name": "NaoExiste"},
 			opts:    FindOptions{},
 			wantLen: 0,
-			checkFn: func(t *testing.T, results []YourEntityType) {
-				assert.Equal(t, 0, len(results))
-			},
+		},
+		{
+			name:    "deve retornar vazio para página além dos resultados",
+			filter:  nil,
+			opts:    FindOptions{Page: 100, Limit: 10},
+			wantLen: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, err := store.FindAll(context.Background(), tt.filter, tt.opts)
+			results, err := store.FindAll(ctx, tt.filter, tt.opts)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -476,121 +667,113 @@ func TestFindAll(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.wantLen, len(results))
 
-			if tt.checkFn != nil {
-				tt.checkFn(t, results)
+			if tt.check != nil {
+				tt.check(t, results)
 			}
 		})
 	}
 }
 
-func TestUpdate(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+func TestSQLFindAll_IsNullOperators(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
-	now := time.Now().UTC()
+	_, err = db.Exec(`
+		CREATE TABLE nullable_entities (
+			id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+			name TEXT,
+			age INTEGER
+		);
+		INSERT INTO nullable_entities (name, age) VALUES ('João', 25);
+		INSERT INTO nullable_entities (name, age) VALUES (NULL, 30);
+		INSERT INTO nullable_entities (name, age) VALUES ('Maria', NULL);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLStore[TestSQLEntityWithoutTimestamps](db, enum.DatabaseDriverSqlite, "nullable_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("deve usar operador __is_null", func(t *testing.T) {
+		results, err := store.FindAll(ctx, map[string]any{"name__is_null": true}, FindOptions{})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(results))
+	})
+
+	t.Run("deve usar operador __is_not_null", func(t *testing.T) {
+		results, err := store.FindAll(ctx, map[string]any{"name__is_not_null": true}, FindOptions{})
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(results))
+	})
+}
+
+// ==================== TESTES COUNT ====================
+
+func TestSQLCount(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup
+	testDocs := []TestSQLEntity{
+		{Name: "João", Age: 25, Active: true},
+		{Name: "Maria", Age: 30, Active: true},
+		{Name: "Pedro", Age: 35, Active: false},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
 
 	tests := []struct {
-		name    string
-		setup   func() *YourEntityType
-		update  func(*YourEntityType) error
-		check   func(*testing.T, *YourEntityType)
-		wantErr bool
+		name      string
+		filter    map[string]any
+		wantCount int64
+		wantErr   bool
 	}{
 		{
-			name: "deve atualizar registro com sucesso",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{ID: 1, Name: "Nome Original"}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			update: func(e *YourEntityType) error {
-				e.Name = "Nome Atualizado"
-				_, err := store.Update(context.Background(), e)
-				return err
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				updated, err := store.FindById(context.Background(), e.ID)
-				time.Sleep(1 * time.Second)
-				assert.NoError(t, err)
-				assert.Equal(t, "Nome Atualizado", updated.Name)
-			},
+			name:      "deve contar todos os registros",
+			filter:    map[string]any{},
+			wantCount: 3,
 		},
 		{
-			name: "deve atualizar timestamp updated_at",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        2,
-					Name:      "Nome Original",
-					CreatedAt: now,
-					UpdatedAt: now,
-				}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			update: func(e *YourEntityType) error {
-				e.Name = "Nome Atualizado"
-				_, err := store.Update(context.Background(), e)
-				return err
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				updated, err := store.FindById(context.Background(), e.ID)
-				time.Sleep(1 * time.Second)
-				assert.NoError(t, err)
-				assert.True(t, updated.UpdatedAt.After(now))
-			},
+			name:      "deve contar com filtro booleano",
+			filter:    map[string]any{"active": true},
+			wantCount: 2,
 		},
 		{
-			name: "deve falhar ao atualizar registro inexistente",
-			setup: func() *YourEntityType {
-				return &YourEntityType{ID: 9999, Name: "Não Existe"}
-			},
-			update: func(e *YourEntityType) error {
-				_, err := store.Update(context.Background(), e)
-				return err
-			},
-			wantErr: true,
+			name:      "deve contar com operador __gt",
+			filter:    map[string]any{"age__gt": 25},
+			wantCount: 2,
 		},
 		{
-			name: "deve atualizar múltiplos campos",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        4,
-					Name:      "Nome Original",
-					CreatedAt: now,
-					UpdatedAt: now,
-				}
-				_, err := store.Save(context.Background(), entity)
-				assert.NoError(t, err)
-				return entity
-			},
-			update: func(e *YourEntityType) error {
-				e.Name = "Nome Atualizado"
-				_, err := store.Update(context.Background(), e)
-				return err
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				updated, err := store.FindById(context.Background(), e.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, "Nome Atualizado", updated.Name)
-				assert.NotNil(t, updated.UpdatedAt)
-			},
+			name:      "deve retornar zero quando não encontra",
+			filter:    map[string]any{"name": "NaoExiste"},
+			wantCount: 0,
+		},
+		{
+			name:      "deve contar com múltiplos filtros",
+			filter:    map[string]any{"active": true, "age__gte": 30},
+			wantCount: 1,
+		},
+		{
+			name:      "deve contar com operador __in",
+			filter:    map[string]any{"name__in": []string{"João", "Maria"}},
+			wantCount: 2,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Executa setup
-			entity := tt.setup()
-
-			// Executa update
-			err := tt.update(entity)
+			count, err := store.Count(ctx, tt.filter)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -598,151 +781,189 @@ func TestUpdate(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
-
-			// Executa verificações
-			if tt.check != nil {
-				tt.check(t, entity)
-			}
+			assert.Equal(t, tt.wantCount, *count)
 		})
 	}
 }
 
-func TestUpsert(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+// ==================== TESTES HAS ====================
+
+func TestSQLHas(t *testing.T) {
+	db, err := setupSQLDB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
 
-	now := time.Now().UTC()
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup
+	saved, _ := store.Save(ctx, &TestSQLEntity{Name: "Existe"})
 
 	tests := []struct {
-		name    string
-		setup   func() *YourEntityType
-		execute func(*YourEntityType) (*UpdateResult, error)
-		check   func(*testing.T, *YourEntityType)
-		wantErr bool
+		name string
+		id   any
+		want bool
 	}{
 		{
-			name: "deve inserir novo registro quando não existe",
-			setup: func() *YourEntityType {
-				return &YourEntityType{
-					ID:   1,
-					Name: "Registro Novo",
-				}
-			},
-			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				// Verifica se o registro foi inserido
-				exists := store.Has(context.Background(), e.ID)
-				assert.True(t, exists)
-
-				// Verifica os dados inseridos
-				record, err := store.FindById(context.Background(), e.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, e.Name, record.Name)
-			},
+			name: "deve retornar true para registro existente",
+			id:   saved.ID,
+			want: true,
 		},
 		{
-			name: "deve atualizar registro existente",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:   2,
-					Name: "Nome Original",
-				}
-				_, _ = store.Save(context.Background(), entity)
-				entity.Name = "Nome Atualizado"
-				return entity
-			},
-			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				record, err := store.FindById(context.Background(), e.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, "Nome Atualizado", record.Name)
-			},
+			name: "deve retornar false para registro inexistente",
+			id:   99999,
+			want: false,
 		},
 		{
-			name: "deve atualizar campo updated_at",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        3,
-					Name:      "Nome Original",
-					UpdatedAt: now,
-				}
-				_, _ = store.Save(context.Background(), entity)
-				entity.Name = "Nome Atualizado"
-				return entity
-			},
-			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				record, err := store.FindById(context.Background(), e.ID)
-				assert.NoError(t, err)
-				assert.True(t, record.UpdatedAt.Equal(e.UpdatedAt))
-			},
+			name: "deve retornar false para ID zero",
+			id:   0,
+			want: false,
 		},
 		{
-			name: "deve usar campo personalizado para upsert",
-			setup: func() *YourEntityType {
-				return &YourEntityType{
-					ID:   4,
-					Name: "Nome Único",
-				}
-			},
-			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, []StoreUpsertFilter{
-					{
-						UpsertFieldKey: "name",
-					},
-				})
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				// Verifica se o registro foi inserido usando o campo personalizado
-				results, err := store.FindAll(context.Background(), map[string]any{"name": e.Name}, FindOptions{})
-				assert.NoError(t, err)
-				assert.Equal(t, 1, len(results))
-				assert.Equal(t, e.Name, results[0].Name)
-			},
-		},
-		{
-			name: "deve preservar campos não atualizáveis",
-			setup: func() *YourEntityType {
-				entity := &YourEntityType{
-					ID:        5,
-					Name:      "Nome Original",
-					CreatedAt: now,
-				}
-				_, _ = store.Save(context.Background(), entity)
-				entity.Name = "Nome Atualizado"
-				entity.CreatedAt = now.Add(1 * time.Hour)
-				return entity
-			},
-			execute: func(e *YourEntityType) (*UpdateResult, error) {
-				return store.Upsert(context.Background(), e, []StoreUpsertFilter{})
-			},
-			check: func(t *testing.T, e *YourEntityType) {
-				record, err := store.FindById(context.Background(), e.ID)
-				assert.NoError(t, err)
-				assert.Equal(t, "Nome Atualizado", record.Name)
-				assert.Equal(t, e.CreatedAt, record.CreatedAt)
-			},
+			name: "deve retornar false para ID negativo",
+			id:   -1,
+			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Prepara o teste
-			entity := tt.setup()
+			result := store.Has(ctx, tt.id)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
 
-			// Executa o upsert
-			result, err := tt.execute(entity)
+// ==================== TESTES UPDATE ====================
+
+func TestSQLUpdate(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func() *TestSQLEntity
+		update  func(*TestSQLEntity) *TestSQLEntity
+		check   func(*testing.T, *TestSQLEntity)
+		wantErr bool
+	}{
+		{
+			name: "deve atualizar campo string",
+			setup: func() *TestSQLEntity {
+				doc := &TestSQLEntity{Name: "Original", Age: 25}
+				store.Save(ctx, doc)
+				return doc
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				e.Name = "Atualizado"
+				return e
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Atualizado", result.Name)
+				assert.Equal(t, 25, result.Age)
+			},
+		},
+		{
+			name: "deve atualizar campo numérico",
+			setup: func() *TestSQLEntity {
+				doc := &TestSQLEntity{Name: "Teste", Age: 25, Score: 80}
+				store.Save(ctx, doc)
+				return doc
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				e.Age = 30
+				e.Score = 95.5
+				return e
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				found, _ := store.FindById(ctx, result.ID)
+				assert.Equal(t, 30, found.Age)
+				assert.Equal(t, 95.5, found.Score)
+			},
+		},
+		{
+			name: "deve atualizar campo booleano",
+			setup: func() *TestSQLEntity {
+				doc := &TestSQLEntity{Name: "Teste", Active: false}
+				store.Save(ctx, doc)
+				return doc
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				e.Active = true
+				return e
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				found, _ := store.FindById(ctx, result.ID)
+				assert.True(t, found.Active)
+			},
+		},
+		{
+			name: "deve atualizar UpdatedAt automaticamente",
+			setup: func() *TestSQLEntity {
+				doc := &TestSQLEntity{Name: "Teste"}
+				store.Save(ctx, doc)
+				time.Sleep(10 * time.Millisecond)
+				return doc
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				e.Name = "Atualizado"
+				return e
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.True(t, time.Since(result.UpdatedAt) < time.Minute)
+			},
+		},
+		{
+			name: "deve atualizar múltiplos campos",
+			setup: func() *TestSQLEntity {
+				doc := &TestSQLEntity{Name: "Original", Age: 20, Score: 50, Active: false}
+				store.Save(ctx, doc)
+				return doc
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				e.Name = "Atualizado"
+				e.Age = 30
+				e.Score = 100
+				e.Active = true
+				return e
+			},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				found, _ := store.FindById(ctx, result.ID)
+				assert.Equal(t, "Atualizado", found.Name)
+				assert.Equal(t, 30, found.Age)
+				assert.Equal(t, 100.0, found.Score)
+				assert.True(t, found.Active)
+			},
+		},
+		{
+			name: "deve retornar erro para registro inexistente",
+			setup: func() *TestSQLEntity {
+				return &TestSQLEntity{ID: 99999, Name: "Teste"}
+			},
+			update: func(e *TestSQLEntity) *TestSQLEntity {
+				return e
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Limpa tabela
+			db.Exec("DELETE FROM test_entities")
+
+			entity := tt.setup()
+			toUpdate := tt.update(entity)
+
+			result, err := store.Update(ctx, toUpdate)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -751,75 +972,407 @@ func TestUpsert(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.NotNil(t, result)
-			assert.Greater(t, result.UpsertedCount, int64(0))
 
-			// Executa verificações específicas
 			if tt.check != nil {
-				tt.check(t, entity)
+				tt.check(t, result)
 			}
 		})
 	}
 }
 
-func TestDelete(t *testing.T) {
-	// Setup
-	db, err := setupDB()
+// ==================== TESTES UPDATE MANY ====================
+
+func TestSQLUpdateMany(t *testing.T) {
+	db, err := setupSQLDB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewSQLStore[YourEntityType](db, enum.DatabaseDriverSqlite, "your_table_name", "id", true)
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
 
 	tests := []struct {
 		name    string
-		setup   func() (int, error)
+		setup   func()
+		input   []EntityFieldsToUpdate
+		check   func(*testing.T, *BulkWriteResult)
 		wantErr bool
+		errMsg  string
 	}{
 		{
-			name: "deve deletar registro existente com sucesso",
-			setup: func() (int, error) {
-				entity := &YourEntityType{
-					ID:   1,
-					Name: "Registro para Deletar",
-				}
-				_, err := store.Save(context.Background(), entity)
-				return entity.ID, err
+			name: "deve atualizar um único registro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original", Age: 25})
 			},
-			wantErr: false,
-		},
-		{
-			name: "deve retornar sucesso ao tentar deletar registro inexistente",
-			setup: func() (int, error) {
-				return 999, nil
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "Original"},
+					Fields: map[string]any{"name": "Atualizado"},
+				},
 			},
-			wantErr: false,
-		},
-		{
-			name: "deve validar integridade após deleção",
-			setup: func() (int, error) {
-				// Salva dois registros
-				entity1 := &YourEntityType{ID: 1, Name: "Registro 1"}
-				entity2 := &YourEntityType{ID: 2, Name: "Registro 2"}
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(1), result.ModifiedCount)
 
-				_, err := store.Save(context.Background(), entity1)
-				if err != nil {
-					return 0, err
-				}
-				_, err = store.Save(context.Background(), entity2)
-				return entity1.ID, err
+				records, _ := store.FindAll(ctx, map[string]any{"name": "Atualizado"}, FindOptions{})
+				assert.Equal(t, 1, len(records))
 			},
-			wantErr: false,
+		},
+		{
+			name: "deve atualizar múltiplos registros com filtros diferentes",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Pedro", Age: 35})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "João"},
+					Fields: map[string]any{"name": "João Atualizado"},
+				},
+				{
+					Filter: map[string]any{"name": "Maria"},
+					Fields: map[string]any{"name": "Maria Atualizada"},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(2), result.ModifiedCount)
+
+				records, _ := store.FindAll(ctx, map[string]any{"name": "Pedro"}, FindOptions{})
+				assert.Equal(t, 1, len(records))
+			},
+		},
+		{
+			name: "deve atualizar vários registros com mesmo filtro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Grupo A", Active: true})
+				store.Save(ctx, &TestSQLEntity{Name: "Grupo A", Active: true})
+				store.Save(ctx, &TestSQLEntity{Name: "Grupo B", Active: false})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"active": true},
+					Fields: map[string]any{"name": "Grupo A Atualizado"},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(2), result.ModifiedCount)
+
+				records, _ := store.FindAll(ctx, map[string]any{"name": "Grupo A Atualizado"}, FindOptions{})
+				assert.Equal(t, 2, len(records))
+			},
+		},
+		{
+			name: "deve atualizar updated_at automaticamente",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original"})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "Original"},
+					Fields: map[string]any{"name": "Atualizado"},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				records, _ := store.FindAll(ctx, map[string]any{"name": "Atualizado"}, FindOptions{})
+				assert.True(t, time.Since(records[0].UpdatedAt) < time.Minute)
+			},
+		},
+		{
+			name: "deve usar operador __like no filtro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João Silva", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "João Santos", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria Silva", Age: 35})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name__like": "João%"},
+					Fields: map[string]any{"active": true},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(2), result.ModifiedCount)
+			},
+		},
+		{
+			name: "deve usar operador __in no filtro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Registro 1", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Registro 2", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Registro 3", Age: 35})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"age__in": []int{25, 35}},
+					Fields: map[string]any{"active": true},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(2), result.ModifiedCount)
+			},
+		},
+		{
+			name: "deve usar operador __gte no filtro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Jovem", Age: 20})
+				store.Save(ctx, &TestSQLEntity{Name: "Adulto", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Senior", Age: 50})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"age__gte": 30},
+					Fields: map[string]any{"active": true},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(2), result.ModifiedCount)
+			},
+		},
+		{
+			name:    "deve retornar erro quando slice vazio",
+			setup:   func() {},
+			input:   []EntityFieldsToUpdate{},
+			wantErr: true,
+			errMsg:  "nenhum update fornecido",
+		},
+		{
+			name: "deve retornar erro quando filtro vazio",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original"})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{},
+					Fields: map[string]any{"name": "Atualizado"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "filtro é obrigatório para update 0",
+		},
+		{
+			name: "deve retornar erro quando campos vazios",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original"})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "Original"},
+					Fields: map[string]any{},
+				},
+			},
+			wantErr: true,
+			errMsg:  "campos para atualização são obrigatórios para update 0",
+		},
+		{
+			name: "deve retornar zero quando filtro não encontra",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original"})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "NaoExiste"},
+					Fields: map[string]any{"name": "Atualizado"},
+				},
+			},
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(0), result.ModifiedCount)
+			},
+		},
+		{
+			name: "deve fazer rollback em caso de erro no meio da transação",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original 1"})
+				store.Save(ctx, &TestSQLEntity{Name: "Original 2"})
+			},
+			input: []EntityFieldsToUpdate{
+				{
+					Filter: map[string]any{"name": "Original 1"},
+					Fields: map[string]any{"name": "Atualizado 1"},
+				},
+				{
+					Filter: map[string]any{},
+					Fields: map[string]any{"name": "Atualizado 2"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "filtro é obrigatório para update 1",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Executa setup e obtém ID para deleção
-			id, err := tt.setup()
-			assert.NoError(t, err)
+			db.Exec("DELETE FROM test_entities")
+			tt.setup()
 
-			// Executa a deleção
-			err = store.Delete(context.Background(), id)
+			result, err := store.UpdateMany(ctx, tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+// ==================== TESTES UPSERT ====================
+
+func TestSQLUpsert(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func()
+		input   *TestSQLEntity
+		filters []StoreUpsertFilter
+		check   func(*testing.T, *UpdateResult)
+		wantErr bool
+	}{
+		{
+			name:  "deve inserir novo registro quando não existe",
+			setup: func() {},
+			input: &TestSQLEntity{
+				Name:   "Novo Registro",
+				Age:    25,
+				Active: true,
+			},
+			filters: nil,
+			check: func(t *testing.T, result *UpdateResult) {
+				assert.Equal(t, int64(1), result.UpsertedCount)
+
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve atualizar registro existente (SQLite usa INSERT OR REPLACE)",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Original", Age: 25})
+			},
+			input: &TestSQLEntity{
+				ID:   1,
+				Name: "Atualizado",
+				Age:  30,
+			},
+			filters: nil,
+			check: func(t *testing.T, result *UpdateResult) {
+				assert.Equal(t, int64(1), result.UpsertedCount)
+
+				found, _ := store.FindById(ctx, 1)
+				assert.Equal(t, "Atualizado", found.Name)
+				assert.Equal(t, 30, found.Age)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db.Exec("DELETE FROM test_entities")
+			tt.setup()
+
+			result, err := store.Upsert(ctx, tt.input, tt.filters)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+func TestSQLUpsert_UnsupportedDriver(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Cria store com driver não suportado
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverOracle, "test_entities", "id", true)
+	ctx := context.Background()
+
+	_, err = store.Upsert(ctx, &TestSQLEntity{Name: "Teste"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported database driver")
+}
+
+// ==================== TESTES UPSERT MANY ====================
+
+func TestSQLUpsertMany(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func()
+		input   []TestSQLEntity
+		filters []StoreUpsertFilter
+		check   func(*testing.T, *BulkWriteResult)
+		wantErr bool
+	}{
+		{
+			name:  "deve inserir múltiplos novos registros",
+			setup: func() {},
+			input: []TestSQLEntity{
+				{Name: "Doc 1", Age: 25},
+				{Name: "Doc 2", Age: 30},
+				{Name: "Doc 3", Age: 35},
+			},
+			filters: nil,
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Equal(t, int64(3), result.UpsertedCount)
+
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(3), *count)
+			},
+		},
+		{
+			name:    "deve retornar nil para slice vazio",
+			setup:   func() {},
+			input:   []TestSQLEntity{},
+			filters: nil,
+			check: func(t *testing.T, result *BulkWriteResult) {
+				assert.Nil(t, result)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db.Exec("DELETE FROM test_entities")
+			tt.setup()
+
+			result, err := store.UpsertMany(ctx, tt.input, tt.filters)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -828,21 +1381,603 @@ func TestDelete(t *testing.T) {
 
 			assert.NoError(t, err)
 
-			// Verifica se o registro foi realmente deletado
-			exists := store.Has(context.Background(), id)
-			assert.False(t, exists, "Registro ainda existe após deleção")
-
-			// Caso especial para teste de integridade
-			if tt.name == "deve validar integridade após deleção" {
-				// Verifica se o outro registro ainda existe
-				exists = store.Has(context.Background(), 3)
-				assert.True(t, exists, "Registro que não deveria ser afetado foi deletado")
-
-				// Verifica contagem total
-				count, err := store.Count(context.Background(), map[string]any{})
-				assert.NoError(t, err)
-				assert.Equal(t, int64(1), *count, "Número incorreto de registros após deleção")
+			if tt.check != nil {
+				tt.check(t, result)
 			}
 		})
 	}
+}
+
+// ==================== TESTES DELETE ====================
+
+func TestSQLDelete(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func() int
+		check   func(*testing.T, int)
+		wantErr bool
+	}{
+		{
+			name: "deve deletar registro existente",
+			setup: func() int {
+				saved, _ := store.Save(ctx, &TestSQLEntity{Name: "Para Deletar"})
+				return saved.ID
+			},
+			check: func(t *testing.T, id int) {
+				exists := store.Has(ctx, id)
+				assert.False(t, exists)
+			},
+		},
+		{
+			name: "não deve retornar erro para registro inexistente",
+			setup: func() int {
+				return 99999
+			},
+			check: func(t *testing.T, id int) {
+				// SQLite não retorna erro para DELETE de registro inexistente
+			},
+		},
+		{
+			name: "deve manter outros registros intactos",
+			setup: func() int {
+				store.Save(ctx, &TestSQLEntity{Name: "Manter 1"})
+				toDelete, _ := store.Save(ctx, &TestSQLEntity{Name: "Deletar"})
+				store.Save(ctx, &TestSQLEntity{Name: "Manter 2"})
+				return toDelete.ID
+			},
+			check: func(t *testing.T, id int) {
+				assert.False(t, store.Has(ctx, id))
+
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db.Exec("DELETE FROM test_entities")
+
+			id := tt.setup()
+			err := store.Delete(ctx, id)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.check != nil {
+				tt.check(t, id)
+			}
+		})
+	}
+}
+
+// ==================== TESTES DELETE MANY ====================
+
+func TestSQLDeleteMany(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func()
+		filter  map[string]any
+		check   func(*testing.T, *DeleteResult)
+		wantErr bool
+	}{
+		{
+			name: "deve deletar múltiplos registros",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Active: true})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Active: true})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Active: false})
+			},
+			filter: map[string]any{"active": true},
+			check: func(t *testing.T, result *DeleteResult) {
+				assert.Equal(t, int64(2), result.DeletedCount)
+
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve usar operadores no filtro",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 20})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 40})
+			},
+			filter: map[string]any{"age__gte": 30},
+			check: func(t *testing.T, result *DeleteResult) {
+				assert.Equal(t, int64(2), result.DeletedCount)
+			},
+		},
+		{
+			name: "deve usar operador __in",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc 1", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc 2", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc 3", Age: 35})
+			},
+			filter: map[string]any{"age__in": []int{25, 35}},
+			check: func(t *testing.T, result *DeleteResult) {
+				assert.Equal(t, int64(2), result.DeletedCount)
+
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve usar operador __like",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João Silva"})
+				store.Save(ctx, &TestSQLEntity{Name: "João Santos"})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria Silva"})
+			},
+			filter: map[string]any{"name__like": "João%"},
+			check: func(t *testing.T, result *DeleteResult) {
+				assert.Equal(t, int64(2), result.DeletedCount)
+			},
+		},
+		{
+			name: "deve retornar zero quando não encontra",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc"})
+			},
+			filter: map[string]any{"name": "NaoExiste"},
+			check: func(t *testing.T, result *DeleteResult) {
+				assert.Equal(t, int64(0), result.DeletedCount)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db.Exec("DELETE FROM test_entities")
+			tt.setup()
+
+			result, err := store.DeleteMany(ctx, tt.filter)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+// ==================== TESTES WITH TRANSACTION ====================
+
+func TestSQLWithTransaction(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("deve executar operações em transação com sucesso", func(t *testing.T) {
+		result, err := store.WithTransaction(ctx, func(txCtx TransactionContext) (any, error) {
+			return "success", nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "success", result)
+	})
+
+	t.Run("deve fazer rollback em caso de erro", func(t *testing.T) {
+		_, err := store.WithTransaction(ctx, func(txCtx TransactionContext) (any, error) {
+			return nil, fmt.Errorf("erro simulado")
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "erro simulado")
+	})
+
+	t.Run("deve permitir operações SQL dentro da transação", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		result, err := store.WithTransaction(ctx, func(txCtx TransactionContext) (any, error) {
+			tx, ok := txCtx.(*sql.Tx)
+			if !ok {
+				return nil, fmt.Errorf("contexto inválido")
+			}
+
+			_, err := tx.Exec("INSERT INTO test_entities (name, age, active, score) VALUES (?, ?, ?, ?)",
+				"Transação", 25, true, 80.0)
+			if err != nil {
+				return nil, err
+			}
+
+			return "inserted", nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "inserted", result)
+
+		// Verifica se foi commitado
+		count, _ := store.Count(ctx, map[string]any{})
+		assert.Equal(t, int64(1), *count)
+	})
+
+	t.Run("deve fazer rollback quando transação falha", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		_, err := store.WithTransaction(ctx, func(txCtx TransactionContext) (any, error) {
+			tx, ok := txCtx.(*sql.Tx)
+			if !ok {
+				return nil, fmt.Errorf("contexto inválido")
+			}
+
+			_, err := tx.Exec("INSERT INTO test_entities (name, age, active, score) VALUES (?, ?, ?, ?)",
+				"Vai Falhar", 25, true, 80.0)
+			if err != nil {
+				return nil, err
+			}
+
+			return nil, fmt.Errorf("erro forçado")
+		})
+
+		assert.Error(t, err)
+
+		// Verifica se foi feito rollback
+		count, _ := store.Count(ctx, map[string]any{})
+		assert.Equal(t, int64(0), *count)
+	})
+}
+
+// ==================== TESTES BUILD WHERE CLAUSE ====================
+
+func TestSQLBuildWhereClause(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true).(*SQLStore[TestSQLEntity])
+
+	tests := []struct {
+		name          string
+		filters       map[string]any
+		wantClause    string
+		wantValuesLen int
+	}{
+		{
+			name:          "deve retornar vazio para filtro nil",
+			filters:       nil,
+			wantClause:    "",
+			wantValuesLen: 0,
+		},
+		{
+			name:          "deve retornar vazio para filtro vazio",
+			filters:       map[string]any{},
+			wantClause:    "",
+			wantValuesLen: 0,
+		},
+		{
+			name:          "deve construir cláusula simples de igualdade",
+			filters:       map[string]any{"name": "João"},
+			wantClause:    " WHERE name = ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __gt",
+			filters:       map[string]any{"age__gt": 30},
+			wantClause:    " WHERE age > ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __gte",
+			filters:       map[string]any{"age__gte": 30},
+			wantClause:    " WHERE age >= ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __lt",
+			filters:       map[string]any{"age__lt": 30},
+			wantClause:    " WHERE age < ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __lte",
+			filters:       map[string]any{"age__lte": 30},
+			wantClause:    " WHERE age <= ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __like",
+			filters:       map[string]any{"name__like": "%João%"},
+			wantClause:    " WHERE name LIKE ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __ilike",
+			filters:       map[string]any{"name__ilike": "%joão%"},
+			wantClause:    " WHERE name ILIKE ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __not_like",
+			filters:       map[string]any{"name__not_like": "%João%"},
+			wantClause:    " WHERE name NOT LIKE ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __not",
+			filters:       map[string]any{"name__not": "João"},
+			wantClause:    " WHERE name != ?",
+			wantValuesLen: 1,
+		},
+		{
+			name:          "deve construir cláusula com operador __is_null",
+			filters:       map[string]any{"name__is_null": true},
+			wantClause:    " WHERE name IS NULL",
+			wantValuesLen: 0,
+		},
+		{
+			name:          "deve construir cláusula com operador __is_not_null",
+			filters:       map[string]any{"name__is_not_null": true},
+			wantClause:    " WHERE name IS NOT NULL",
+			wantValuesLen: 0,
+		},
+		{
+			name:          "deve construir cláusula com operador __in ([]int)",
+			filters:       map[string]any{"age__in": []int{25, 30, 35}},
+			wantClause:    " WHERE age IN (?, ?, ?)",
+			wantValuesLen: 3,
+		},
+		{
+			name:          "deve construir cláusula com operador __in ([]string)",
+			filters:       map[string]any{"name__in": []string{"João", "Maria"}},
+			wantClause:    " WHERE name IN (?, ?)",
+			wantValuesLen: 2,
+		},
+		{
+			name:          "deve ordenar chaves alfabeticamente",
+			filters:       map[string]any{"name": "João", "age": 30},
+			wantClause:    " WHERE age = ? AND name = ?",
+			wantValuesLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clause, values := store.buildWhereClause(tt.filters)
+
+			assert.Equal(t, tt.wantClause, clause)
+			assert.Equal(t, tt.wantValuesLen, len(values))
+		})
+	}
+}
+
+// ==================== TESTES DE EDGE CASES ====================
+
+func TestSQLEdgeCases(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("deve lidar com registros com campos especiais", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		doc := &TestSQLEntity{
+			Name: "Nome com 'aspas' e \"aspas duplas\"",
+		}
+
+		saved, err := store.Save(ctx, doc)
+		assert.NoError(t, err)
+
+		found, err := store.FindById(ctx, saved.ID)
+		assert.NoError(t, err)
+		assert.Equal(t, saved.Name, found.Name)
+	})
+
+	t.Run("deve lidar com valores extremos", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		doc := &TestSQLEntity{
+			Name:  "Extreme Values",
+			Age:   2147483647,
+			Score: 1.7976931348623157e+100,
+		}
+
+		saved, err := store.Save(ctx, doc)
+		assert.NoError(t, err)
+
+		found, err := store.FindById(ctx, saved.ID)
+		assert.NoError(t, err)
+		assert.Equal(t, doc.Age, found.Age)
+	})
+
+	t.Run("deve lidar com strings vazias em busca", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		store.Save(ctx, &TestSQLEntity{Name: ""})
+		store.Save(ctx, &TestSQLEntity{Name: "Teste"})
+
+		results, err := store.FindAll(ctx, map[string]any{"name": ""}, FindOptions{})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(results))
+		assert.Empty(t, results[0].Name)
+	})
+
+	t.Run("deve lidar com operações em tabela vazia", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		count, err := store.Count(ctx, map[string]any{})
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), *count)
+
+		results, err := store.FindAll(ctx, nil, FindOptions{})
+		assert.NoError(t, err)
+		assert.Empty(t, results)
+
+		exists := store.Has(ctx, 1)
+		assert.False(t, exists)
+	})
+
+	t.Run("deve lidar com caracteres unicode", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		doc := &TestSQLEntity{
+			Name: "日本語テスト 🎉 émojis ñ ç",
+		}
+
+		saved, err := store.Save(ctx, doc)
+		assert.NoError(t, err)
+
+		found, err := store.FindById(ctx, saved.ID)
+		assert.NoError(t, err)
+		assert.Equal(t, doc.Name, found.Name)
+	})
+
+	t.Run("deve lidar com filtro __in com slice vazio via reflection", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		store.Save(ctx, &TestSQLEntity{Name: "Test", Age: 25})
+
+		// Slice de float64 (não tratado explicitamente)
+		results, err := store.FindAll(ctx, map[string]any{"score__in": []float64{80.0, 90.0}}, FindOptions{})
+		assert.NoError(t, err)
+		assert.Empty(t, results)
+	})
+}
+
+// ==================== TESTES DE PERFORMANCE ====================
+
+func TestSQLPerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Pulando testes de performance em modo curto")
+	}
+
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("deve inserir 1000 registros em batch eficientemente", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		entities := make([]TestSQLEntity, 1000)
+		for i := 0; i < 1000; i++ {
+			entities[i] = TestSQLEntity{
+				Name:   fmt.Sprintf("Performance Test %d", i),
+				Age:    i % 100,
+				Active: i%2 == 0,
+				Score:  float64(i) * 1.5,
+			}
+		}
+
+		start := time.Now()
+		result, err := store.SaveMany(ctx, entities)
+		duration := time.Since(start)
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1000, len(result.InsertedIDs))
+		assert.Less(t, duration, 30*time.Second)
+
+		t.Logf("Inserção de 1000 registros: %v", duration)
+	})
+
+	t.Run("deve buscar com filtro eficientemente", func(t *testing.T) {
+		start := time.Now()
+		results, err := store.FindAll(ctx, map[string]any{"age__gte": 50}, FindOptions{})
+		duration := time.Since(start)
+
+		assert.NoError(t, err)
+		assert.NotEmpty(t, results)
+		assert.Less(t, duration, 5*time.Second)
+
+		t.Logf("Busca com filtro: %v, resultados: %d", duration, len(results))
+	})
+
+	t.Run("deve contar registros eficientemente", func(t *testing.T) {
+		start := time.Now()
+		count, err := store.Count(ctx, map[string]any{"active": true})
+		duration := time.Since(start)
+
+		assert.NoError(t, err)
+		assert.Greater(t, *count, int64(0))
+		assert.Less(t, duration, 1*time.Second)
+
+		t.Logf("Contagem: %v, total: %d", duration, *count)
+	})
+}
+
+// ==================== TESTES DE CONVERSÃO DE TIPOS ====================
+
+func TestSQLTypeConversion(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("deve converter tipos corretamente ao ler do banco", func(t *testing.T) {
+		db.Exec("DELETE FROM test_entities")
+
+		now := time.Now()
+		doc := &TestSQLEntity{
+			Name:      "Teste Tipos",
+			Age:       30,
+			Active:    true,
+			Score:     95.5,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		saved, err := store.Save(ctx, doc)
+		assert.NoError(t, err)
+
+		found, err := store.FindById(ctx, saved.ID)
+		assert.NoError(t, err)
+
+		assert.IsType(t, 0, found.ID)
+		assert.IsType(t, "", found.Name)
+		assert.IsType(t, 0, found.Age)
+		assert.IsType(t, false, found.Active)
+		assert.IsType(t, 0.0, found.Score)
+		assert.IsType(t, time.Time{}, found.CreatedAt)
+		assert.IsType(t, time.Time{}, found.UpdatedAt)
+	})
 }

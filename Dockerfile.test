@@ -1,0 +1,17 @@
+# Dockerfile para executar testes unitários do go-db-store
+FROM golang:1.25
+
+# Define diretório de trabalho
+WORKDIR /app
+
+# Copia go.mod e go.sum primeiro (para cache de dependências)
+COPY go.mod go.sum ./
+
+# Baixa as dependências
+RUN go mod download
+
+# Copia o código fonte
+COPY . .
+
+# Comando padrão: executa os testes
+CMD ["go", "test", "-v", "./...", "-timeout", "300s"]

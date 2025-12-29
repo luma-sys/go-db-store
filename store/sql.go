@@ -206,7 +206,6 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 
 // SaveMany insere múltiplos registros
 func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyResult, error) {
-	// Lógica similar a Save, mas em batch
 	if len(entities) == 0 {
 		return nil, nil
 	}
@@ -216,29 +215,71 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 		return nil, err
 	}
 
-	for _, entity := range entities {
-		// Chame o método Save para cada entidade
-		_, err := s.Save(ctx, &entity)
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	ids := make([]any, len(entities))
+
+	for i, entity := range entities {
+		v := reflect.ValueOf(&entity).Elem()
+		fields := make([]string, 0)
+		placeholders := make([]string, 0)
+		values := make([]any, 0)
+
+		for j := range v.NumField() {
+			field := v.Type().Field(j)
+			fieldName := field.Tag.Get("db")
+
+			if fieldName == "-" {
+				continue
+			}
+
+			if fieldName == s.primaryKey && s.autoincrement {
+				continue
+			}
+
+			fields = append(fields, fieldName)
+			placeholders = append(placeholders, "?")
+			values = append(values, v.Field(j).Interface())
+		}
+
+		query := fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s)",
+			s.tableName,
+			strings.Join(fields, ", "),
+			strings.Join(placeholders, ", "),
+		)
+
+		// Usa tx.ExecContext em vez de s.db.ExecContext
+		result, err := tx.ExecContext(ctx, query, values...)
 		if err != nil {
 			tx.Rollback()
 			return nil, err
 		}
+
+		if lastID, err := result.LastInsertId(); err == nil {
+			ids[i] = lastID
+			idField := v.FieldByName("ID")
+			if idField.IsValid() && idField.CanSet() {
+				idField.SetInt(lastID)
+			}
+		}
 	}
 
-	err = tx.Commit()
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
-	ids := make([]any, len(entities))
-	for i, entity := range entities {
-		v := reflect.ValueOf(&entity).Elem()
-		idField := v.FieldByName("ID")
-		if idField.IsValid() && idField.CanSet() {
-			ids[i] = idField.Interface()
-		}
-	}
 	return &InsertManyResult{InsertedIDs: ids}, nil
+}
+
+// SaveManyNotOrdered [NOT IMPLEMENTED] salva vários registros de forma desordenada
+func (s *SQLStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertManyResult, error) {
+	return nil, fmt.Errorf("not implemented by SQL module")
 }
 
 // Update atualiza um registro existente
@@ -304,56 +345,91 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	return e, nil
 }
 
-// UpdateMany atualiza múltiplos registros
-func (s *SQLStore[T]) UpdateMany(ctx context.Context, f map[string]any, updates map[string]any) (*UpdateResult, error) {
-	// Verifica se o struct tem campo updated_at
-	var dummy T
-	t := reflect.TypeOf(dummy)
-	if t.Kind() == reflect.Pointer {
-		t = t.Elem()
+// UpdateMany atualiza atributos de múltiplos registros baseado em um filtro
+func (s *SQLStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate) (*BulkWriteResult, error) {
+	if len(fd) == 0 {
+		return nil, fmt.Errorf("nenhum update fornecido")
 	}
 
-	hasUpdatedAt := false
-	for i := range t.NumField() {
-		field := t.Field(i)
-		if field.Tag.Get("db") == "updated_at" {
-			hasUpdatedAt = true
-			break
-		}
-	}
-
-	// Construir cláusula WHERE
-	whereClause, _ := s.buildWhereClause(f)
-
-	// Preparar campos de atualização
-	setUpdates := make([]string, 0)
-	values := make([]any, 0)
-
-	for field, value := range updates {
-		setUpdates = append(setUpdates, fmt.Sprintf("%s = ?", field))
-		values = append(values, value)
-	}
-
-	// Se updated_at existe mas não foi definido pelo cliente, adiciona automaticamente
-	if hasUpdatedAt {
-		setUpdates = append(setUpdates, fmt.Sprintf("%s = ?", "updated_at"))
-		values = append(values, time.Now())
-	}
-
-	query := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE 1=1 %s",
-		s.tableName,
-		strings.Join(setUpdates, ", "),
-		whereClause,
-	)
-
-	result, err := s.db.ExecContext(ctx, query, values...)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("erro ao iniciar transação: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	return &UpdateResult{MatchedCount: rowsAffected, ModifiedCount: rowsAffected}, nil
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+	}()
+
+	now := time.Now()
+	var totalMatched, totalModified int64
+
+	for i, fb := range fd {
+		if len(fb.Filter) == 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("filtro é obrigatório para update %d", i)
+		}
+
+		if len(fb.Fields) == 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("campos para atualização são obrigatórios para update %d", i)
+		}
+
+		// Constrói SET clause
+		setClauses := make([]string, 0, len(fb.Fields)+1)
+		setValues := make([]any, 0, len(fb.Fields)+1)
+
+		// Ordena as chaves para consistência
+		fieldKeys := make([]string, 0, len(fb.Fields))
+		for key := range fb.Fields {
+			fieldKeys = append(fieldKeys, key)
+		}
+		sort.Strings(fieldKeys)
+
+		for _, key := range fieldKeys {
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
+			setValues = append(setValues, fb.Fields[key])
+		}
+
+		// Adiciona updated_at automaticamente
+		setClauses = append(setClauses, "updated_at = ?")
+		setValues = append(setValues, now)
+
+		// Constrói WHERE clause
+		whereClause, whereValues := s.buildWhereClause(fb.Filter)
+
+		// Monta a query completa
+		query := fmt.Sprintf(
+			"UPDATE %s SET %s%s",
+			s.tableName,
+			strings.Join(setClauses, ", "),
+			whereClause,
+		)
+
+		// Combina valores: SET values + WHERE values
+		allValues := append(setValues, whereValues...)
+
+		result, err := tx.ExecContext(ctx, query, allValues...)
+		if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("erro ao executar update %d: %w", i, err)
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		totalMatched += rowsAffected
+		totalModified += rowsAffected
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("erro ao fazer commit: %w", err)
+	}
+
+	return &BulkWriteResult{
+		MatchedCount:  totalMatched,
+		ModifiedCount: totalModified,
+	}, nil
 }
 
 // Upsert cria ou atualiza um registro
@@ -456,17 +532,126 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 		return nil, err
 	}
 
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+	}()
+
 	for _, entity := range entities {
-		_, err := s.Upsert(ctx, &entity, f)
+		v := reflect.ValueOf(&entity).Elem()
+
+		// Verifica se é um novo registro
+		idField := v.FieldByName("ID")
+		isNewRecord := false
+		if idField.IsValid() {
+			switch idField.Kind() {
+			case reflect.Int, reflect.Int64, reflect.Int32:
+				isNewRecord = idField.Int() == 0
+			case reflect.String:
+				isNewRecord = idField.String() == ""
+			}
+		}
+
+		// Preparar campos
+		fields := make([]string, 0)
+		placeholders := make([]string, 0)
+		updates := make([]string, 0)
+		values := make([]any, 0)
+
+		if len(f) == 0 {
+			f = []StoreUpsertFilter{
+				{
+					UpsertFieldKey: s.primaryKey,
+					UpsertBsonKey:  "ID",
+				},
+			}
+		}
+		upsertField := f[0].UpsertFieldKey
+		if upsertField == "" {
+			upsertField = s.primaryKey
+		}
+
+		for i := range v.NumField() {
+			field := v.Type().Field(i)
+			fieldName := field.Tag.Get("db")
+
+			if fieldName == "-" {
+				continue
+			}
+
+			// Para novos registros com autoincrement, pula o campo ID
+			if isNewRecord && s.autoincrement && fieldName == s.primaryKey {
+				continue
+			}
+
+			fields = append(fields, fieldName)
+			placeholders = append(placeholders, "?")
+			values = append(values, v.Field(i).Interface())
+
+			if fieldName != upsertField {
+				updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", fieldName, fieldName))
+			}
+		}
+
+		// Verifica se existe campo updated_at
+		if hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid(); hasUpdatedAt {
+			updates = append(updates, fmt.Sprintf("%s = ?", "updated_at"))
+			values = append(values, time.Now())
+		}
+
+		var query string
+		switch s.driver {
+		case enum.DatabaseDriverMysql, enum.DatabaseDriverMariaDB:
+			query = fmt.Sprintf(
+				"INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s",
+				s.tableName,
+				strings.Join(fields, ", "),
+				strings.Join(placeholders, ", "),
+				strings.Join(updates, ", "),
+			)
+		case enum.DatabaseDriverSqlite:
+			if isNewRecord && s.autoincrement {
+				// Para novos registros, usa INSERT simples
+				query = fmt.Sprintf(
+					"INSERT INTO %s (%s) VALUES (%s)",
+					s.tableName,
+					strings.Join(fields, ", "),
+					strings.Join(placeholders, ", "),
+				)
+			} else {
+				query = fmt.Sprintf(
+					"INSERT OR REPLACE INTO %s (%s) VALUES (%s)",
+					s.tableName,
+					strings.Join(fields, ", "),
+					strings.Join(placeholders, ", "),
+				)
+			}
+		case enum.DatabaseDriverPostgres:
+			conflictField := upsertField
+			query = fmt.Sprintf(
+				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+				s.tableName,
+				strings.Join(fields, ", "),
+				strings.Join(placeholders, ", "),
+				conflictField,
+				strings.Join(updates, ", "),
+			)
+		default:
+			tx.Rollback()
+			return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", s.driver.GetValue())
+		}
+
+		_, err := tx.ExecContext(ctx, query, values...)
 		if err != nil {
 			tx.Rollback()
 			return nil, err
 		}
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return nil, err
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("erro ao fazer commit: %w", err)
 	}
 
 	return &BulkWriteResult{UpsertedCount: int64(len(entities))}, nil
@@ -485,7 +670,7 @@ func (s *SQLStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*Delete
 	query := fmt.Sprintf("DELETE FROM %s", s.tableName)
 	query += whereClause
 
-	result, err := s.db.ExecContext(ctx, query, values)
+	result, err := s.db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return nil, err
 	}
@@ -659,21 +844,6 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 	return " WHERE " + strings.Join(whereConditions, " AND "), values
 }
 
-// toCamelCase Converte snake_case para CamelCase
-// func (s *SQLStore[T]) toCamelCase(value string) string {
-// 	capitalize := cases.Title(language.Portuguese)
-// 	parts := strings.Split(value, "_")
-// 	for i := range parts {
-// 		if parts[i] == "id" {
-// 			parts[i] = "ID"
-// 			continue
-// 		}
-//
-// 		parts[i] = capitalize.String(parts[i])
-// 	}
-// 	return strings.Join(parts, "")
-// }
-
 // setValue Função auxiliar para definir valores com conversão de tipo
 func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
 	if !field.CanSet() {
@@ -714,7 +884,7 @@ func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
 			// Cria um novo valor do tipo correto
 			newValue := reflect.New(elemType)
 
-			// Converte o val	or para o tipo correto
+			// Converte o valor para o tipo correto
 			convertedValue, err := s.convertToType(reflect.ValueOf(value), elemType)
 			if err != nil {
 				// Lida com erro de conversão
@@ -727,6 +897,31 @@ func (s *SQLStore[T]) setValue(field reflect.Value, value any) {
 
 			// Define o ponteiro
 			field.Set(newValue)
+		}
+	case reflect.Bool:
+		switch v := value.(type) {
+		case bool:
+			field.SetBool(v)
+		case int, int64:
+			// SQLite armazena boolean como INTEGER (0 ou 1)
+			field.SetBool(reflect.ValueOf(v).Int() != 0)
+		case []byte:
+			// Pode vir como string "0", "1", "true", "false"
+			strVal := string(v)
+			field.SetBool(strVal == "1" || strVal == "true" || strVal == "TRUE")
+		case string:
+			field.SetBool(v == "1" || v == "true" || v == "TRUE")
+		default:
+			// Tenta converter via reflection para int64
+			rv := reflect.ValueOf(value)
+			switch rv.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				field.SetBool(rv.Int() != 0)
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				field.SetBool(rv.Uint() != 0)
+			case reflect.Float32, reflect.Float64:
+				field.SetBool(rv.Float() != 0)
+			}
 		}
 	case reflect.String:
 		if v, ok := value.([]byte); ok {
