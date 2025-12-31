@@ -78,10 +78,11 @@ func (o *FindOptions) Initialize() {
 type Store[T any] interface {
 	WithTransaction(ctx context.Context, fn Transaction) (any, error)
 	Has(ctx context.Context, id any) bool
-	Count(ctx context.Context, q map[string]any) (*int64, error)
+	Count(ctx context.Context, f map[string]any) (*int64, error)
 
+	FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error)
 	FindById(ctx context.Context, id any) (*T, error)
-	FindAll(ctx context.Context, q map[string]any, opts FindOptions) ([]T, error)
+	FindOne(ctx context.Context, f map[string]interface{}) (*T, error)
 
 	Save(ctx context.Context, e *T) (*T, error)
 	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error)

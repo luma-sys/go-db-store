@@ -114,6 +114,23 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	return &result, nil
 }
 
+func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T, error) {
+	var result T
+
+	filter := bson.M{}
+	maps.Copy(filter, f)
+
+	err := s.coll.FindOne(ctx, filter).Decode(&result)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, fmt.Errorf("documento não encontrado com filtro %v", f)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("erro ao buscar documento: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Save salva um documento
 func (s *mongoStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	now := time.Now()

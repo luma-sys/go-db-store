@@ -438,6 +438,170 @@ func TestSQLFindById(t *testing.T) {
 	}
 }
 
+// ==================== TESTES FIND ONE ====================
+
+func TestSQLFindOne(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup: salva registros de teste
+	testDocs := []TestSQLEntity{
+		{Name: "João Silva", Age: 25, Active: true, Score: 80},
+		{Name: "Maria Santos", Age: 30, Active: true, Score: 90},
+		{Name: "Pedro Costa", Age: 35, Active: false, Score: 70},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
+
+	tests := []struct {
+		name    string
+		filter  map[string]interface{}
+		check   func(*testing.T, *TestSQLEntity)
+		wantErr bool
+	}{
+		{
+			name:   "deve encontrar registro com filtro simples",
+			filter: map[string]interface{}{"name": "João Silva"},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "João Silva", result.Name)
+				assert.Equal(t, 25, result.Age)
+				assert.True(t, result.Active)
+				assert.Equal(t, 80.0, result.Score)
+			},
+		},
+		{
+			name:   "deve encontrar registro com filtro booleano",
+			filter: map[string]interface{}{"active": false},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Pedro Costa", result.Name)
+				assert.False(t, result.Active)
+			},
+		},
+		{
+			name:   "deve encontrar registro com múltiplos filtros",
+			filter: map[string]interface{}{"active": true, "age": 30},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Maria Santos", result.Name)
+				assert.Equal(t, 30, result.Age)
+				assert.True(t, result.Active)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __gt",
+			filter: map[string]interface{}{"age__gt": 30},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Pedro Costa", result.Name)
+				assert.Greater(t, result.Age, 30)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __gte",
+			filter: map[string]interface{}{"age__gte": 30},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.GreaterOrEqual(t, result.Age, 30)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __lt",
+			filter: map[string]interface{}{"score__lt": 75},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Pedro Costa", result.Name)
+				assert.Less(t, result.Score, 75.0)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __lte",
+			filter: map[string]interface{}{"age__lte": 25},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "João Silva", result.Name)
+				assert.LessOrEqual(t, result.Age, 25)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __like",
+			filter: map[string]interface{}{"name__like": "%Silva%"},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "João Silva", result.Name)
+				assert.Contains(t, result.Name, "Silva")
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __like no início",
+			filter: map[string]interface{}{"name__like": "Maria%"},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Maria Santos", result.Name)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __in com []string",
+			filter: map[string]interface{}{"name__in": []string{"Maria Santos", "Não Existe"}},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, "Maria Santos", result.Name)
+			},
+		},
+		{
+			name:   "deve encontrar registro com operador __in com []int",
+			filter: map[string]interface{}{"age__in": []int{25, 99}},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, 25, result.Age)
+			},
+		},
+		{
+			name:    "deve retornar erro quando não encontra registro",
+			filter:  map[string]interface{}{"name": "Não Existe"},
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro não corresponde",
+			filter:  map[string]interface{}{"age": 999},
+			wantErr: true,
+		},
+		{
+			name:   "deve encontrar registro com filtro vazio (retorna primeiro)",
+			filter: map[string]interface{}{},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.NotNil(t, result)
+				assert.NotEmpty(t, result.Name)
+			},
+		},
+		{
+			name:   "deve encontrar por ID numérico",
+			filter: map[string]interface{}{"id": 1},
+			check: func(t *testing.T, result *TestSQLEntity) {
+				assert.Equal(t, 1, result.ID)
+				assert.Equal(t, "João Silva", result.Name)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := store.FindOne(ctx, tt.filter)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), "documento não encontrado")
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
 // ==================== TESTES FIND ALL ====================
 
 func TestSQLFindAll(t *testing.T) {

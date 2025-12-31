@@ -459,6 +459,148 @@ func TestMongoFindById(t *testing.T) {
 	}
 }
 
+// ==================== TESTES FIND ONE ====================
+
+func TestMongoFindOne(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+
+	// Setup: salva documentos de teste
+	testDocs := []TestEntity{
+		{ID: "1", Name: "João Silva", Age: 25, Active: true, Score: 80},
+		{ID: "2", Name: "Maria Santos", Age: 30, Active: true, Score: 90},
+		{ID: "3", Name: "Pedro Costa", Age: 35, Active: false, Score: 70},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
+
+	tests := []struct {
+		name    string
+		filter  map[string]interface{}
+		check   func(*testing.T, *TestEntity)
+		wantErr bool
+	}{
+		{
+			name:   "deve encontrar documento com filtro simples",
+			filter: map[string]interface{}{"name": "João Silva"},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "1", result.ID)
+				assert.Equal(t, "João Silva", result.Name)
+				assert.Equal(t, 25, result.Age)
+				assert.True(t, result.Active)
+				assert.Equal(t, 80.0, result.Score)
+			},
+		},
+		{
+			name:   "deve encontrar documento com filtro booleano",
+			filter: map[string]interface{}{"active": false},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "3", result.ID)
+				assert.False(t, result.Active)
+			},
+		},
+		{
+			name:   "deve encontrar documento com múltiplos filtros",
+			filter: map[string]interface{}{"active": true, "age": 30},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "2", result.ID)
+				assert.Equal(t, "Maria Santos", result.Name)
+				assert.Equal(t, 30, result.Age)
+				assert.True(t, result.Active)
+			},
+		},
+		{
+			name:   "deve encontrar documento com operador $gt",
+			filter: map[string]interface{}{"age": bson.M{"$gt": 30}},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "3", result.ID)
+				assert.Greater(t, result.Age, 30)
+			},
+		},
+		{
+			name:   "deve encontrar documento com operador $gte",
+			filter: map[string]interface{}{"age": bson.M{"$gte": 30}},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.GreaterOrEqual(t, result.Age, 30)
+			},
+		},
+		{
+			name:   "deve encontrar documento com operador $lt",
+			filter: map[string]interface{}{"score": bson.M{"$lt": 75}},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "3", result.ID)
+				assert.Less(t, result.Score, 75.0)
+			},
+		},
+		{
+			name:   "deve encontrar documento com operador $in",
+			filter: map[string]interface{}{"name": bson.M{"$in": []string{"Maria Santos", "Não Existe"}}},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "2", result.ID)
+				assert.Equal(t, "Maria Santos", result.Name)
+			},
+		},
+		{
+			name:   "deve encontrar documento com operador $regex",
+			filter: map[string]interface{}{"name": bson.M{"$regex": "^João"}},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "1", result.ID)
+				assert.Contains(t, result.Name, "João")
+			},
+		},
+		{
+			name:    "deve retornar erro quando não encontra documento",
+			filter:  map[string]interface{}{"name": "Não Existe"},
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro não corresponde",
+			filter:  map[string]interface{}{"age": 999},
+			wantErr: true,
+		},
+		{
+			name:   "deve encontrar documento com filtro vazio (retorna primeiro)",
+			filter: map[string]interface{}{},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.NotNil(t, result)
+				assert.NotEmpty(t, result.ID)
+			},
+		},
+		{
+			name:   "deve encontrar por ID usando _id",
+			filter: map[string]interface{}{"_id": "2"},
+			check: func(t *testing.T, result *TestEntity) {
+				assert.Equal(t, "2", result.ID)
+				assert.Equal(t, "Maria Santos", result.Name)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := store.FindOne(ctx, tt.filter)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), "documento não encontrado")
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
 // ==================== TESTES FIND ALL ====================
 
 func TestMongoFindAll(t *testing.T) {

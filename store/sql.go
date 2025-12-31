@@ -108,6 +108,35 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	return nil, fmt.Errorf("registro não encontrado")
 }
 
+func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T, error) {
+	whereClause, values := s.buildWhereClause(f)
+	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
+	query += whereClause
+	query += " LIMIT 1"
+
+	stmt, err := s.db.Prepare(query)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao preparar query: %v", err)
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.QueryContext(ctx, values...)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao buscar documento: %w", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		result, err := s.parseRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("erro ao decodificar documento: %w", err)
+		}
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("documento não encontrado com filtro %v", f)
+}
+
 // FindAll busca registros com paginação
 func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
 	opts.Initialize()
