@@ -112,7 +112,13 @@ func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
 	query += whereClause
-	query += " LIMIT 1"
+
+	// Oracle não suporta LIMIT, usa FETCH FIRST
+	if s.driver == enum.DatabaseDriverOracle {
+		query += " FETCH FIRST 1 ROWS ONLY"
+	} else {
+		query += " LIMIT 1"
+	}
 
 	stmt, err := s.db.Prepare(query)
 	if err != nil {
@@ -221,8 +227,8 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 		return nil, err
 	}
 
-	// Definir ID gerado se suportado
-	if lastID, err := result.LastInsertId(); err == nil {
+	// Definir ID gerado se suportado (Oracle não suporta LastInsertId)
+	if lastID, err := result.LastInsertId(); err == nil && lastID > 0 {
 		// Atualizar o campo ID usando reflexão
 		idField := v.FieldByName("ID")
 		if idField.IsValid() && idField.CanSet() {
@@ -482,9 +488,17 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (
 			},
 		}
 	}
-	upsertField := f[0].UpsertFieldKey // TODO: implementar upsert com multiplos campos de filtro
-	if upsertField == "" {
-		upsertField = s.primaryKey
+
+	// Construir lista de campos de conflito (upsert) a partir dos filtros
+	conflictFields := make([]string, 0, len(f))
+	conflictFieldsMap := make(map[string]bool)
+	for _, filter := range f {
+		fieldKey := filter.UpsertFieldKey
+		if fieldKey == "" {
+			fieldKey = s.primaryKey
+		}
+		conflictFields = append(conflictFields, fieldKey)
+		conflictFieldsMap[fieldKey] = true
 	}
 
 	for i := range v.NumField() {
@@ -496,8 +510,8 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (
 			placeholders = append(placeholders, "?")
 			values = append(values, v.Field(i).Interface())
 
-			// Campos para atualização (exceto o campo de upsert)
-			if fieldName != upsertField {
+			// Campos para atualização (exceto os campos de conflito)
+			if !conflictFieldsMap[fieldName] {
 				updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", fieldName, fieldName))
 			}
 		}
@@ -527,16 +541,82 @@ func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (
 			strings.Join(placeholders, ", "),
 		)
 	case enum.DatabaseDriverPostgres:
-		// Para PostgreSQL, a sintaxe seria diferente
-		conflictField := upsertField
+		// PostgreSQL suporta múltiplos campos de conflito
 		query = fmt.Sprintf(
 			"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
 			s.tableName,
 			strings.Join(fields, ", "),
 			strings.Join(placeholders, ", "),
-			conflictField,
+			strings.Join(conflictFields, ", "),
 			strings.Join(updates, ", "),
 		)
+	case enum.DatabaseDriverOracle:
+		// Oracle usa MERGE para upsert com múltiplos campos de conflito
+		// Construir condições ON para o MERGE
+		onConditions := make([]string, 0, len(conflictFields))
+		for _, field := range conflictFields {
+			onConditions = append(onConditions, fmt.Sprintf("t.%s = ?", field))
+		}
+
+		// Construir UPDATE SET (excluindo campos de conflito)
+		updateSets := make([]string, 0)
+		for _, field := range fields {
+			if !conflictFieldsMap[field] {
+				updateSets = append(updateSets, fmt.Sprintf("t.%s = ?", field))
+			}
+		}
+
+		if hasUpdatedAt {
+			updateSets = append(updateSets, "t.updated_at = ?")
+		}
+
+		query = fmt.Sprintf(
+			"MERGE INTO %s t USING dual ON (%s) "+
+				"WHEN MATCHED THEN UPDATE SET %s "+
+				"WHEN NOT MATCHED THEN INSERT (%s) VALUES (%s)",
+			s.tableName,
+			strings.Join(onConditions, " AND "),
+			strings.Join(updateSets, ", "),
+			strings.Join(fields, ", "),
+			strings.Join(placeholders, ", "),
+		)
+
+		// Para Oracle, precisamos duplicar os valores:
+		// 1. Para a cláusula ON (conflictFields)
+		// 2. Para o UPDATE SET (campos não-conflito)
+		// 3. Para o INSERT VALUES (todos os campos)
+		oracleValues := make([]any, 0)
+
+		// Valores para ON condition (conflictFields)
+		for _, field := range conflictFields {
+			for i := range v.NumField() {
+				if v.Type().Field(i).Tag.Get("db") == field {
+					oracleValues = append(oracleValues, v.Field(i).Interface())
+					break
+				}
+			}
+		}
+
+		// Valores para UPDATE SET (campos não-conflito)
+		for _, field := range fields {
+			if !conflictFieldsMap[field] {
+				for i := range v.NumField() {
+					if v.Type().Field(i).Tag.Get("db") == field {
+						oracleValues = append(oracleValues, v.Field(i).Interface())
+						break
+					}
+				}
+			}
+		}
+
+		if hasUpdatedAt {
+			oracleValues = append(oracleValues, time.Now())
+		}
+
+		// Valores para INSERT (todos os campos)
+		oracleValues = append(oracleValues, values...)
+
+		values = oracleValues
 	default:
 		return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", driverName.GetValue())
 	}
@@ -597,9 +677,17 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 				},
 			}
 		}
-		upsertField := f[0].UpsertFieldKey
-		if upsertField == "" {
-			upsertField = s.primaryKey
+
+		// Construir lista de campos de conflito (upsert) a partir dos filtros
+		conflictFields := make([]string, 0, len(f))
+		conflictFieldsMap := make(map[string]bool)
+		for _, filter := range f {
+			fieldKey := filter.UpsertFieldKey
+			if fieldKey == "" {
+				fieldKey = s.primaryKey
+			}
+			conflictFields = append(conflictFields, fieldKey)
+			conflictFieldsMap[fieldKey] = true
 		}
 
 		for i := range v.NumField() {
@@ -619,13 +707,15 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 			placeholders = append(placeholders, "?")
 			values = append(values, v.Field(i).Interface())
 
-			if fieldName != upsertField {
+			// Campos para atualização (exceto os campos de conflito)
+			if !conflictFieldsMap[fieldName] {
 				updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", fieldName, fieldName))
 			}
 		}
 
 		// Verifica se existe campo updated_at
-		if hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid(); hasUpdatedAt {
+		hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid()
+		if hasUpdatedAt {
 			updates = append(updates, fmt.Sprintf("%s = ?", "updated_at"))
 			values = append(values, time.Now())
 		}
@@ -658,15 +748,82 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 				)
 			}
 		case enum.DatabaseDriverPostgres:
-			conflictField := upsertField
+			// PostgreSQL suporta múltiplos campos de conflito
 			query = fmt.Sprintf(
 				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
 				s.tableName,
 				strings.Join(fields, ", "),
 				strings.Join(placeholders, ", "),
-				conflictField,
+				strings.Join(conflictFields, ", "),
 				strings.Join(updates, ", "),
 			)
+		case enum.DatabaseDriverOracle:
+			// Oracle usa MERGE para upsert com múltiplos campos de conflito
+			// Construir condições ON para o MERGE
+			onConditions := make([]string, 0, len(conflictFields))
+			for _, field := range conflictFields {
+				onConditions = append(onConditions, fmt.Sprintf("t.%s = ?", field))
+			}
+
+			// Construir UPDATE SET (excluindo campos de conflito)
+			updateSets := make([]string, 0)
+			for _, field := range fields {
+				if !conflictFieldsMap[field] {
+					updateSets = append(updateSets, fmt.Sprintf("t.%s = ?", field))
+				}
+			}
+
+			if hasUpdatedAt {
+				updateSets = append(updateSets, "t.updated_at = ?")
+			}
+
+			query = fmt.Sprintf(
+				"MERGE INTO %s t USING dual ON (%s) "+
+					"WHEN MATCHED THEN UPDATE SET %s "+
+					"WHEN NOT MATCHED THEN INSERT (%s) VALUES (%s)",
+				s.tableName,
+				strings.Join(onConditions, " AND "),
+				strings.Join(updateSets, ", "),
+				strings.Join(fields, ", "),
+				strings.Join(placeholders, ", "),
+			)
+
+			// Para Oracle, precisamos duplicar os valores:
+			// 1. Para a cláusula ON (conflictFields)
+			// 2. Para o UPDATE SET (campos não-conflito)
+			// 3. Para o INSERT VALUES (todos os campos)
+			oracleValues := make([]any, 0)
+
+			// Valores para ON condition (conflictFields)
+			for _, field := range conflictFields {
+				for i := range v.NumField() {
+					if v.Type().Field(i).Tag.Get("db") == field {
+						oracleValues = append(oracleValues, v.Field(i).Interface())
+						break
+					}
+				}
+			}
+
+			// Valores para UPDATE SET (campos não-conflito)
+			for _, field := range fields {
+				if !conflictFieldsMap[field] {
+					for i := range v.NumField() {
+						if v.Type().Field(i).Tag.Get("db") == field {
+							oracleValues = append(oracleValues, v.Field(i).Interface())
+							break
+						}
+					}
+				}
+			}
+
+			if hasUpdatedAt {
+				oracleValues = append(oracleValues, time.Now())
+			}
+
+			// Valores para INSERT (todos os campos)
+			oracleValues = append(oracleValues, values...)
+
+			values = oracleValues
 		default:
 			tx.Rollback()
 			return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", s.driver.GetValue())
@@ -831,7 +988,8 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 			case "like":
 				operator = "LIKE"
 			case "ilike":
-				operator = "ILIKE"
+				// Case-insensitive LIKE compatível com todos os bancos
+				operator = "ILIKE_COMPAT"
 			case "not_like":
 				operator = "NOT LIKE"
 			case "gt":
@@ -855,6 +1013,13 @@ func (s *SQLStore[T]) buildWhereClause(filters map[string]any) (string, []any) {
 
 		if operator == "IS NULL" || operator == "IS NOT NULL" {
 			whereConditions = append(whereConditions, fmt.Sprintf("%s %s", field, operator))
+			continue
+		}
+
+		// Tratamento especial para ILIKE compatível com todos os bancos
+		if operator == "ILIKE_COMPAT" {
+			whereConditions = append(whereConditions, fmt.Sprintf("UPPER(%s) LIKE UPPER(?)", field))
+			values = append(values, value)
 			continue
 		}
 

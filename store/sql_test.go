@@ -875,6 +875,282 @@ func TestSQLFindAll_IsNullOperators(t *testing.T) {
 	})
 }
 
+// ==================== TESTES ILIKE (CASE INSENSITIVE) ====================
+
+func TestSQLILike(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup: salva registros de teste com diferentes casos de capitalização
+	testDocs := []TestSQLEntity{
+		{Name: "João Silva", Age: 25, Active: true},
+		{Name: "MARIA SANTOS", Age: 30, Active: true},
+		{Name: "pedro oliveira", Age: 35, Active: false},
+		{Name: "Ana Paula Costa", Age: 28, Active: true},
+		{Name: "CARLOS EDUARDO", Age: 40, Active: false},
+		{Name: "Fernanda Lima", Age: 22, Active: true},
+		{Name: "roberto almeida", Age: 33, Active: true},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
+
+	tests := []struct {
+		name    string
+		filter  map[string]any
+		wantLen int
+		check   func(*testing.T, []TestSQLEntity)
+	}{
+		{
+			name:    "deve encontrar com busca case-insensitive minúscula",
+			filter:  map[string]any{"name__ilike": "%joão%"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "João Silva", results[0].Name)
+			},
+		},
+		{
+			name:    "deve encontrar com busca case-insensitive maiúscula",
+			filter:  map[string]any{"name__ilike": "%MARIA%"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "MARIA SANTOS", results[0].Name)
+			},
+		},
+		{
+			name:    "deve encontrar com busca case-insensitive mixed case",
+			filter:  map[string]any{"name__ilike": "%PeDrO%"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "pedro oliveira", results[0].Name)
+			},
+		},
+		{
+			name:    "deve encontrar múltiplos com wildcard no início",
+			filter:  map[string]any{"name__ilike": "%a%"},
+			wantLen: 7, // João, MARIA, Ana Paula Costa, CARLOS, Fernanda, roberto almeida, pedro oliveira não tem 'a'
+		},
+		{
+			name:    "deve encontrar com wildcard no fim",
+			filter:  map[string]any{"name__ilike": "joão%"},
+			wantLen: 1,
+		},
+		{
+			name:    "deve encontrar com wildcard no início",
+			filter:  map[string]any{"name__ilike": "%silva"},
+			wantLen: 1,
+		},
+		{
+			name:    "deve encontrar nome completo case-insensitive",
+			filter:  map[string]any{"name__ilike": "ana paula costa"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "Ana Paula Costa", results[0].Name)
+			},
+		},
+		{
+			name:    "deve encontrar sobrenome case-insensitive",
+			filter:  map[string]any{"name__ilike": "%EDUARDO%"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "CARLOS EDUARDO", results[0].Name)
+			},
+		},
+		{
+			name:    "deve retornar vazio quando não encontra",
+			filter:  map[string]any{"name__ilike": "%zzz%"},
+			wantLen: 0,
+		},
+		{
+			name:    "deve combinar ILIKE com outro filtro",
+			filter:  map[string]any{"name__ilike": "%a%", "active": true},
+			wantLen: 5, // João, MARIA, Ana Paula Costa, Fernanda, roberto almeida (todos ativos com 'a')
+		},
+		{
+			name:    "deve combinar ILIKE com operador numérico",
+			filter:  map[string]any{"name__ilike": "%silva%", "age__gte": 20},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "João Silva", results[0].Name)
+				assert.Equal(t, 25, results[0].Age)
+			},
+		},
+		{
+			name:    "deve funcionar com espaços e caracteres especiais",
+			filter:  map[string]any{"name__ilike": "%PAULA COSTA%"},
+			wantLen: 1,
+			check: func(t *testing.T, results []TestSQLEntity) {
+				assert.Equal(t, "Ana Paula Costa", results[0].Name)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := store.FindAll(ctx, tt.filter, FindOptions{})
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantLen, len(results), "Número de resultados não corresponde")
+			if tt.check != nil && len(results) > 0 {
+				tt.check(t, results)
+			}
+		})
+	}
+}
+
+// Teste específico para garantir que ILIKE funciona com FindOne
+func TestSQLFindOneILike(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup
+	testDocs := []TestSQLEntity{
+		{Name: "UPPERCASE NAME", Age: 25, Active: true},
+		{Name: "lowercase name", Age: 30, Active: true},
+		{Name: "MiXeD CaSe NaMe", Age: 35, Active: false},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
+
+	tests := []struct {
+		name      string
+		filter    map[string]any
+		wantName  string
+		wantFound bool
+	}{
+		{
+			name:      "deve encontrar UPPERCASE com busca lowercase",
+			filter:    map[string]any{"name__ilike": "%uppercase%"},
+			wantName:  "UPPERCASE NAME",
+			wantFound: true,
+		},
+		{
+			name:      "deve encontrar lowercase com busca UPPERCASE",
+			filter:    map[string]any{"name__ilike": "%LOWERCASE%"},
+			wantName:  "lowercase name",
+			wantFound: true,
+		},
+		{
+			name:      "deve encontrar MiXeD com busca qualquer case",
+			filter:    map[string]any{"name__ilike": "%mixed case%"},
+			wantName:  "MiXeD CaSe NaMe",
+			wantFound: true,
+		},
+		{
+			name:      "deve retornar erro quando não encontra",
+			filter:    map[string]any{"name__ilike": "%inexistente%"},
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := store.FindOne(ctx, tt.filter)
+			if tt.wantFound {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.wantName, result.Name)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			}
+		})
+	}
+}
+
+// Teste para verificar que ILIKE funciona com DeleteOne
+func TestSQLDeleteOneILike(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup
+	testDoc := TestSQLEntity{Name: "TeStE CaSe InSeNsItIvE", Age: 25, Active: true}
+	_, _ = store.Save(ctx, &testDoc)
+
+	// Verifica que o registro existe
+	count, _ := store.Count(ctx, map[string]any{"name__ilike": "%teste%"})
+	assert.Equal(t, int64(1), *count)
+
+	// Deleta usando ILIKE
+	err = store.DeleteOne(ctx, map[string]any{"name__ilike": "%TESTE CASE%"})
+	assert.NoError(t, err)
+
+	// Verifica que foi deletado
+	count, _ = store.Count(ctx, map[string]any{"name__ilike": "%teste%"})
+	assert.Equal(t, int64(0), *count)
+}
+
+// Teste para verificar que ILIKE funciona com Count
+func TestSQLCountILike(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	// Setup
+	testDocs := []TestSQLEntity{
+		{Name: "TESTE UM", Age: 25, Active: true},
+		{Name: "teste dois", Age: 30, Active: true},
+		{Name: "TeSte TrÊs", Age: 35, Active: false},
+		{Name: "Outro Nome", Age: 40, Active: true},
+	}
+	for _, doc := range testDocs {
+		_, _ = store.Save(ctx, &doc)
+	}
+
+	tests := []struct {
+		name      string
+		filter    map[string]any
+		wantCount int64
+	}{
+		{
+			name:      "deve contar todos com 'teste' (case insensitive)",
+			filter:    map[string]any{"name__ilike": "%teste%"},
+			wantCount: 3,
+		},
+		{
+			name:      "deve contar com busca UPPERCASE",
+			filter:    map[string]any{"name__ilike": "%TESTE%"},
+			wantCount: 3,
+		},
+		{
+			name:      "deve contar zero quando não encontra",
+			filter:    map[string]any{"name__ilike": "%xyz%"},
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := store.Count(ctx, tt.filter)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantCount, *count)
+		})
+	}
+}
+
 // ==================== TESTES COUNT ====================
 
 func TestSQLCount(t *testing.T) {
@@ -1466,22 +1742,6 @@ func TestSQLUpsert(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSQLUpsert_UnsupportedDriver(t *testing.T) {
-	db, err := setupSQLDB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	// Cria store com driver não suportado
-	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverOracle, "test_entities", "id", true)
-	ctx := context.Background()
-
-	_, err = store.Upsert(ctx, &TestSQLEntity{Name: "Teste"}, nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported database driver")
 }
 
 // ==================== TESTES UPSERT MANY ====================
@@ -2094,7 +2354,7 @@ func TestSQLBuildWhereClause(t *testing.T) {
 		{
 			name:          "deve construir cláusula com operador __ilike",
 			filters:       map[string]any{"name__ilike": "%joão%"},
-			wantClause:    " WHERE name ILIKE ?",
+			wantClause:    " WHERE UPPER(name) LIKE UPPER(?)",
 			wantValuesLen: 1,
 		},
 		{
