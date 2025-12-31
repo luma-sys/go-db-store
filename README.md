@@ -18,21 +18,23 @@ ORM prototype library for SQL and MongoDB.
 
 The following methods are available for both SQL and MongoDB stores:
 
-| Methods         | Description                                                  |
-| --------------- | ------------------------------------------------------------ |
-| WithTransaction | Starts a transaction and executes the transaction decorator  |
-| Has             | Returns true if an entity exists by id                       |
-| Count           | Returns the number of entities by filtered query             |
-| FindById        | Returns an entity by id                                      |
-| FindAll         | Returns a paginated list of entities                         |
-| Save            | Creates a new entity                                         |
-| SaveMany        | Creates multiple entities                                    |
-| Update          | Update updates an existing entity                            |
-| UpdateMany      | UpdateMany updates fields in multiple entities using filters |
-| Upsert          | Upsert creates or updates an entity                          |
-| UpsertMany      | Creates or updates multiple entities                         |
-| Delete          | Deletes an entity by id                                      |
-| DeleteMany      | Deletes many entities by match filter                        |
+| Methods             | Description                                                  |
+|---------------------|--------------------------------------------------------------|
+| **WithTransaction** | Starts a transaction and executes the transaction decorator  |
+| **Has**             | Returns true if an entity exists by id                       |
+| **Count**           | Returns the number of entities by filtered query             |
+| **FindById**        | Returns an entity by id                                      |
+| **FindOne**         | Returns one entity by match filter                           |
+| **FindAll**         | Returns a paginated list of entities                         |
+| **Save**            | Creates a new entity                                         |
+| **SaveMany**        | Creates multiple entities                                    |
+| **Update**          | Update updates an existing entity                            |
+| **UpdateMany**      | UpdateMany updates fields in multiple entities using filters |
+| **Upsert**          | Upsert creates or updates an entity                          |
+| **UpsertMany**      | Creates or updates multiple entities                         |
+| **Delete**          | Deletes an entity by id                                      |
+| **DeleteOne**       | Deletes one entity by match filter                           |
+| **DeleteMany**      | Deletes many entities by match filter                        |
 
 ## Usage
 
@@ -91,6 +93,7 @@ To execute unit test by Docker access this [documentation](DOCKER_TESTS.md).
 | **SaveMany**           | Multiple docs, timestamps, empty slice, partial failure                                                                                   |
 | **SaveManyNotOrdered** | Unordered insertion                                                                                                                       |
 | **FindById**           | Existing document, non-existent document, empty ID                                                                                        |
+| **FindOne**            | Simple filter, boolean, operators ($gt, $gte, $lt, $in, $regex), multiple filters, empty filter, not found, by _id                        |
 | **FindAll**            | No filter, empty filter, boolean, string, operators ($gt, $gte, $lt, $lte, $in, $nin, $regex, $ne), multiple filters, pagination, sorting |
 | **Count**              | All, with filter, operators, zero results                                                                                                 |
 | **Has**                | Existing, non-existent document, empty ID                                                                                                 |
@@ -99,6 +102,7 @@ To execute unit test by Docker access this [documentation](DOCKER_TESTS.md).
 | **Upsert**             | New document, update, timestamps, custom filter                                                                                           |
 | **UpsertMany**         | Multiple new, updates, mix of operations                                                                                                  |
 | **Delete**             | Existing, non-existent, integrity                                                                                                         |
+| **DeleteOne**          | Simple filter, boolean, operators ($gt, $gte, $lt, $in, $regex), multiple filters, not found, null filter, empty filter, integrity        |
 | **DeleteMany**         | Multiple, operators, zero results, nil filter                                                                                             |
 | **Edge Cases**         | Special characters, extreme values, empty strings, pagination beyond                                                                      |
 | **Performance**        | Batch of 1000, search with filter                                                                                                         |
@@ -111,7 +115,8 @@ To execute unit test by Docker access this [documentation](DOCKER_TESTS.md).
 | **SaveMany**           | Multiple records, single record, empty slice                                                                                                                            |
 | **SaveManyNotOrdered** | Not implemented (returns error)                                                                                                                                         |
 | **FindById**           | Existing record, non-existent record, zero ID                                                                                                                           |
-| **FindAll**            | No filter, empty filter, boolean, string, operators (**gt, **gte, **lt, **lte, **like, **not_like, **not, **in, **is_null, **is_not_null), multiple filters, pagination |
+| **FindOne**            | Simple filter, boolean, operators (\*\*gt, \*\*gte, \*\*lt, \*\*lte, \*\*like, \*\*in), multiple filters, empty filter, null filter, not found                                      |
+| **FindAll**            | No filter, empty filter, boolean, string, operators (\*\*gt, \*\*gte, \*\*lt, \*\*lte, \*\*like, \*\*not_like, \*\*not, \*\*in, \*\*is_null, \*\*is_not_null), multiple filters, pagination |
 | **Count**              | All, with filter, operators, zero results, multiple filters                                                                                                             |
 | **Has**                | Existing, non-existent, zero ID, negative ID                                                                                                                            |
 | **Update**             | String, numeric, boolean, timestamp, multiple fields, non-existent record                                                                                               |
@@ -119,6 +124,7 @@ To execute unit test by Docker access this [documentation](DOCKER_TESTS.md).
 | **Upsert**             | New record, update, unsupported driver                                                                                                                                  |
 | **UpsertMany**         | Multiple new, empty slice                                                                                                                                               |
 | **Delete**             | Existing, non-existent, integrity                                                                                                                                       |
+| **DeleteOne**          | Simple filter, boolean, operators (\*\*gt, \*\*gte, \*\*lt, \*\*lte, \*\*like, \*\*in), multiple filters, not found, null filter, empty filter, integrity                           |
 | **DeleteMany**         | Multiple, operators, zero results                                                                                                                                       |
 | **WithTransaction**    | Success, rollback, SQL operations                                                                                                                                       |
 | **buildWhereClause**   | All operators, key sorting                                                                                                                                              |
