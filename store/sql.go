@@ -693,6 +693,48 @@ func (s *SQLStore[T]) Delete(ctx context.Context, id any) error {
 	return err
 }
 
+// DeleteOne remove um registro baseado em um filtro
+func (s *SQLStore[T]) DeleteOne(ctx context.Context, f map[string]interface{}) error {
+	if f == nil || len(f) == 0 {
+		return fmt.Errorf("filtro não pode ser nulo ou vazio")
+	}
+
+	whereClause, values := s.buildWhereClause(f)
+	var query string
+
+	switch s.driver {
+	case enum.DatabaseDriverSqlite:
+		// SQLite não suporta LIMIT em DELETE, usa subquery com ROWID
+		query = fmt.Sprintf("DELETE FROM %s WHERE rowid IN (SELECT rowid FROM %s%s LIMIT 1)",
+			s.tableName, s.tableName, whereClause)
+	case enum.DatabaseDriverOracle:
+		// Oracle não suporta LIMIT, usa ROWNUM em subquery
+		query = fmt.Sprintf("DELETE FROM %s WHERE ROWID IN (SELECT ROWID FROM %s%s AND ROWNUM = 1)",
+			s.tableName, s.tableName, whereClause)
+	case enum.DatabaseDriverMysql, enum.DatabaseDriverMariaDB, enum.DatabaseDriverPostgres:
+		// MySQL, MariaDB e PostgreSQL suportam LIMIT em DELETE
+		query = fmt.Sprintf("DELETE FROM %s%s LIMIT 1", s.tableName, whereClause)
+	default:
+		return fmt.Errorf("unsupported database driver for DeleteOne: %s", s.driver.GetValue())
+	}
+
+	result, err := s.db.ExecContext(ctx, query, values...)
+	if err != nil {
+		return fmt.Errorf("erro ao deletar documento: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("erro ao verificar registros deletados: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("nenhum documento encontrado com filtro %v", f)
+	}
+
+	return nil
+}
+
 // DeleteMany remove múltiplos registros
 func (s *SQLStore[T]) DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error) {
 	whereClause, values := s.buildWhereClause(f)

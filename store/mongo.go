@@ -117,10 +117,7 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T, error) {
 	var result T
 
-	filter := bson.M{}
-	maps.Copy(filter, f)
-
-	err := s.coll.FindOne(ctx, filter).Decode(&result)
+	err := s.coll.FindOne(ctx, f).Decode(&result)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, fmt.Errorf("documento não encontrado com filtro %v", f)
 	}
@@ -415,6 +412,23 @@ func (s *mongoStore[T]) Delete(ctx context.Context, id any) error {
 
 	if result.DeletedCount == 0 {
 		return fmt.Errorf("nenhum documento encontrado com id %s", id)
+	}
+
+	return nil
+}
+
+func (s *mongoStore[T]) DeleteOne(ctx context.Context, f map[string]interface{}) error {
+	if f == nil || len(f) == 0 {
+		return fmt.Errorf("filtro não pode ser nulo ou vazio")
+	}
+
+	result, err := s.coll.DeleteOne(ctx, f)
+	if err != nil {
+		return fmt.Errorf("erro ao deletar documento: %w", err)
+	}
+
+	if result.DeletedCount == 0 {
+		return fmt.Errorf("nenhum documento encontrado com filtro %v", f)
 	}
 
 	return nil

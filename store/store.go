@@ -95,5 +95,6 @@ type Store[T any] interface {
 	UpsertMany(ctx context.Context, e []T, f []StoreUpsertFilter) (*BulkWriteResult, error)
 
 	Delete(ctx context.Context, id any) error
+	DeleteOne(ctx context.Context, f map[string]interface{}) error
 	DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error)
 }

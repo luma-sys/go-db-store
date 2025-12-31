@@ -1605,6 +1605,186 @@ func TestMongoDelete(t *testing.T) {
 	}
 }
 
+// ==================== TESTES DELETE ONE ====================
+
+func TestMongoDeleteOne(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func()
+		filter  map[string]interface{}
+		check   func(*testing.T)
+		wantErr bool
+	}{
+		{
+			name: "deve deletar documento com filtro simples",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "João", Age: 25})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria", Age: 30})
+			},
+			filter: map[string]interface{}{"name": "João"},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "1"))
+				assert.True(t, store.Has(ctx, "2"))
+			},
+		},
+		{
+			name: "deve deletar com filtro booleano",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc1", Active: true})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc2", Active: false})
+			},
+			filter: map[string]interface{}{"active": true},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "1"))
+				assert.True(t, store.Has(ctx, "2"))
+			},
+		},
+		{
+			name: "deve deletar com operador $gt",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc", Age: 20})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 35})
+				store.Save(ctx, &TestEntity{ID: "3", Name: "Doc", Age: 40})
+			},
+			filter: map[string]interface{}{"age": bson.M{"$gt": 30}},
+			check: func(t *testing.T) {
+				// Deve deletar apenas um (o primeiro que encontrar > 30)
+				count, _ := store.Count(ctx, bson.M{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador $gte",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc", Age: 25})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 30})
+			},
+			filter: map[string]interface{}{"age": bson.M{"$gte": 30}},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "2"))
+				count, _ := store.Count(ctx, bson.M{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador $lt",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc", Age: 20})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 30})
+			},
+			filter: map[string]interface{}{"age": bson.M{"$lt": 25}},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "1"))
+				count, _ := store.Count(ctx, bson.M{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador $in",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "João"})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria"})
+				store.Save(ctx, &TestEntity{ID: "3", Name: "Pedro"})
+			},
+			filter: map[string]interface{}{"name": bson.M{"$in": []string{"João", "Maria"}}},
+			check: func(t *testing.T) {
+				// Deve deletar apenas um
+				count, _ := store.Count(ctx, bson.M{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador $regex",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "João Silva"})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria Santos"})
+			},
+			filter: map[string]interface{}{"name": bson.M{"$regex": "Silva"}},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "1"))
+				assert.True(t, store.Has(ctx, "2"))
+			},
+		},
+		{
+			name: "deve deletar com múltiplos filtros",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "João", Age: 25})
+				store.Save(ctx, &TestEntity{ID: "2", Name: "João", Age: 30})
+				store.Save(ctx, &TestEntity{ID: "3", Name: "Maria", Age: 25})
+			},
+			filter: map[string]interface{}{"name": "João", "age": 25},
+			check: func(t *testing.T) {
+				assert.False(t, store.Has(ctx, "1"))
+				assert.True(t, store.Has(ctx, "2"))
+				assert.True(t, store.Has(ctx, "3"))
+			},
+		},
+		{
+			name: "deve retornar erro quando nenhum documento é encontrado",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "1", Name: "João"})
+			},
+			filter:  map[string]interface{}{"name": "NaoExiste"},
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro é nulo",
+			setup:   func() {},
+			filter:  nil,
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro é vazio",
+			setup:   func() {},
+			filter:  map[string]interface{}{},
+			wantErr: true,
+		},
+		{
+			name: "deve manter outros documentos intactos",
+			setup: func() {
+				store.Save(ctx, &TestEntity{ID: "keep-1", Name: "Manter 1"})
+				store.Save(ctx, &TestEntity{ID: "delete-me", Name: "Deletar"})
+				store.Save(ctx, &TestEntity{ID: "keep-2", Name: "Manter 2"})
+			},
+			filter: map[string]interface{}{"name": "Deletar"},
+			check: func(t *testing.T) {
+				assert.True(t, store.Has(ctx, "keep-1"))
+				assert.False(t, store.Has(ctx, "delete-me"))
+				assert.True(t, store.Has(ctx, "keep-2"))
+
+				count, _ := store.Count(ctx, bson.M{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collection.Drop(ctx)
+			tt.setup()
+
+			err := store.DeleteOne(ctx, tt.filter)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.check != nil {
+				tt.check(t)
+			}
+		})
+	}
+}
+
 // ==================== TESTES DELETE MANY ====================
 
 func TestMongoDeleteMany(t *testing.T) {

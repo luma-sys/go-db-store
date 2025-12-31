@@ -1628,6 +1628,215 @@ func TestSQLDelete(t *testing.T) {
 	}
 }
 
+// ==================== TESTES DELETE ONE ====================
+
+func TestSQLDeleteOne(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		setup   func()
+		filter  map[string]interface{}
+		check   func(*testing.T)
+		wantErr bool
+	}{
+		{
+			name: "deve deletar registro com filtro simples",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria", Age: 30})
+			},
+			filter: map[string]interface{}{"name": "João"},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+
+				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "Maria"})
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name: "deve deletar com filtro booleano",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc1", Active: true})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc2", Active: false})
+			},
+			filter: map[string]interface{}{"active": true},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+
+				result, _ := store.FindOne(ctx, map[string]interface{}{"active": false})
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name: "deve deletar com operador __gt",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 20})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 35})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 40})
+			},
+			filter: map[string]interface{}{"age__gt": 30},
+			check: func(t *testing.T) {
+				// Deve deletar apenas um (o primeiro que encontrar > 30)
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador __gte",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
+			},
+			filter: map[string]interface{}{"age__gte": 30},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador __lt",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 20})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
+			},
+			filter: map[string]interface{}{"age__lt": 25},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador __lte",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 20})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
+			},
+			filter: map[string]interface{}{"age__lte": 25},
+			check: func(t *testing.T) {
+				// Deve deletar apenas um
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+		{
+			name: "deve deletar com operador __like",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João Silva"})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria Santos"})
+			},
+			filter: map[string]interface{}{"name__like": "%Silva%"},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(1), *count)
+
+				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "Maria Santos"})
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name: "deve deletar com operador __in",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João"})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria"})
+				store.Save(ctx, &TestSQLEntity{Name: "Pedro"})
+			},
+			filter: map[string]interface{}{"name__in": []string{"João", "Maria"}},
+			check: func(t *testing.T) {
+				// Deve deletar apenas um
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+			},
+		},
+		{
+			name: "deve deletar com múltiplos filtros",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 25})
+				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 30})
+				store.Save(ctx, &TestSQLEntity{Name: "Maria", Age: 25})
+			},
+			filter: map[string]interface{}{"name": "João", "age": 25},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+
+				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "João", "age": 30})
+				assert.NotNil(t, result)
+			},
+		},
+		{
+			name: "deve retornar erro quando nenhum registro é encontrado",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "João"})
+			},
+			filter:  map[string]interface{}{"name": "NaoExiste"},
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro é nulo",
+			setup:   func() {},
+			filter:  nil,
+			wantErr: true,
+		},
+		{
+			name:    "deve retornar erro quando filtro é vazio",
+			setup:   func() {},
+			filter:  map[string]interface{}{},
+			wantErr: true,
+		},
+		{
+			name: "deve manter outros registros intactos",
+			setup: func() {
+				store.Save(ctx, &TestSQLEntity{Name: "Manter 1"})
+				store.Save(ctx, &TestSQLEntity{Name: "Deletar"})
+				store.Save(ctx, &TestSQLEntity{Name: "Manter 2"})
+			},
+			filter: map[string]interface{}{"name": "Deletar"},
+			check: func(t *testing.T) {
+				count, _ := store.Count(ctx, map[string]any{})
+				assert.Equal(t, int64(2), *count)
+
+				results, _ := store.FindAll(ctx, map[string]any{}, FindOptions{})
+				assert.Equal(t, 2, len(results))
+
+				for _, r := range results {
+					assert.NotEqual(t, "Deletar", r.Name)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db.Exec("DELETE FROM test_entities")
+			tt.setup()
+
+			err := store.DeleteOne(ctx, tt.filter)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			if tt.check != nil {
+				tt.check(t)
+			}
+		})
+	}
+}
+
 // ==================== TESTES DELETE MANY ====================
 
 func TestSQLDeleteMany(t *testing.T) {
