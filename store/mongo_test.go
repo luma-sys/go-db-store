@@ -114,30 +114,41 @@ func getMongoDownloadURL(version string) string {
 }
 
 func setupMongoTest(t *testing.T) (*mongo.Collection, func()) {
-	memopts := &memongo.Options{
-		MongoVersion:   "7.0.14",
-		DownloadURL:    getMongoDownloadURL("7.0.14"),
-		StartupTimeout: 120 * time.Second,
-	}
-	mongoServer, err := memongo.StartWithOptions(memopts)
-	if err != nil {
-		t.Fatalf("Erro ao iniciar MongoDB em memória: %v", err)
+	ctx := context.Background()
+
+	var uri string
+	var stopServer func()
+
+	if mongoURI := os.Getenv("MONGODB_URI"); mongoURI != "" {
+		uri = mongoURI
+		stopServer = func() {}
+	} else {
+		memopts := &memongo.Options{
+			MongoVersion:   "7.0.14",
+			DownloadURL:    getMongoDownloadURL("7.0.14"),
+			StartupTimeout: 120 * time.Second,
+		}
+		mongoServer, err := memongo.StartWithOptions(memopts)
+		if err != nil {
+			t.Fatalf("Erro ao iniciar MongoDB em memória: %v", err)
+		}
+		uri = mongoServer.URI()
+		stopServer = mongoServer.Stop
 	}
 
-	ctx := context.Background()
-	opts := options.Client().ApplyURI(mongoServer.URI()).SetMaxPoolSize(200)
+	opts := options.Client().ApplyURI(uri).SetMaxPoolSize(200)
 	client, err := mongo.Connect(opts)
 	if err != nil {
 		t.Fatalf("Erro ao conectar ao MongoDB: %v", err)
 	}
 
 	db := client.Database("test_db")
-	collection := db.Collection("test_collection")
+	collection := db.Collection(fmt.Sprintf("test_collection_%d", time.Now().UnixNano()))
 
 	cleanup := func() {
 		collection.Drop(ctx)
 		client.Disconnect(ctx)
-		mongoServer.Stop()
+		stopServer()
 	}
 
 	return collection, cleanup
