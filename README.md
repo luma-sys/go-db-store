@@ -1,5 +1,8 @@
 # Go DB Store
 
+[![Tests](https://github.com/luma-sys/go-db-store/actions/workflows/test.yml/badge.svg)](https://github.com/luma-sys/go-db-store/actions/workflows/test.yml)
+[![Release](https://github.com/luma-sys/go-db-store/actions/workflows/release.yml/badge.svg)](https://github.com/luma-sys/go-db-store/actions/workflows/release.yml)
+
 ORM prototype library for SQL and MongoDB.
 
 ## Summary
