@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -32,7 +33,31 @@ func NewSQLStore[T any](db *sql.DB, driver enum.DatabaseDriver, tableName string
 	}
 }
 
-// WithTransaction para SQL usa uma simples transação
+// EnsureIndexesASC cria índices para vários campos em ordem crescente
+func (s *SQLStore[T]) EnsureIndexesASC(_ ...string) error {
+	// TODO: implement ASC index creation for SQL databases
+	return errors.New("method not implemented")
+}
+
+// EnsureIndexesDESC cria índices para vários campos em ordem decrescente
+func (s *SQLStore[T]) EnsureIndexesDESC(_ ...string) error {
+	// TODO: implement DESC index creation for SQL databases
+	return errors.New("method not implemented")
+}
+
+// EnsureIndexes cria índices para vários campos
+func (s *SQLStore[T]) EnsureIndexes(_ ...IndexField) error {
+	// TODO: implement mixed-direction index creation for SQL databases
+	return errors.New("method not implemented")
+}
+
+// EnsureManyIndexes cria índices para vários campos em batch
+func (s *SQLStore[T]) EnsureManyIndexes(_ ...[]IndexField) error {
+	// TODO: implement batch index creation for SQL databases
+	return errors.New("method not implemented")
+}
+
+// WithTransaction executa uma transação no banco de dados
 func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn Transaction) (any, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -61,6 +86,7 @@ func (s *SQLStore[T]) WithTransaction(ctx context.Context, fn Transaction) (any,
 	return result, nil
 }
 
+// Has verifica se um registro existe
 func (s *SQLStore[T]) Has(ctx context.Context, id any) bool {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = ?)", s.tableName, s.primaryKey)
 

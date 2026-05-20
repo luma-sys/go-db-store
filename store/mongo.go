@@ -28,6 +28,49 @@ func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 	}
 }
 
+// EnsureIndexesASC cria índices para vários campos em ordem crescente
+func (s *mongoStore[T]) EnsureIndexesASC(fields ...string) error {
+	ix := make([]IndexField, len(fields))
+	for i, f := range fields {
+		ix[i] = IndexField{Key: f, Dir: ASC}
+	}
+	return s.EnsureIndexes(ix...)
+}
+
+// EnsureIndexesDESC cria índices para vários campos em ordem decrescente
+func (s *mongoStore[T]) EnsureIndexesDESC(fields ...string) error {
+	ix := make([]IndexField, len(fields))
+	for i, f := range fields {
+		ix[i] = IndexField{Key: f, Dir: DESC}
+	}
+	return s.EnsureIndexes(ix...)
+}
+
+// EnsureIndexes cria índices para vários campos
+func (s *mongoStore[T]) EnsureIndexes(fields ...IndexField) error {
+	keys := make(bson.D, len(fields))
+	for i, f := range fields {
+		keys[i] = bson.E{Key: f.Key, Value: int(f.Dir)}
+	}
+	_, err := s.coll.Indexes().CreateOne(context.Background(), mongo.IndexModel{Keys: keys})
+	return err
+}
+
+// EnsureManyIndexes cria índices para vários campos em batch
+func (s *mongoStore[T]) EnsureManyIndexes(indexes ...[]IndexField) error {
+	models := make([]mongo.IndexModel, len(indexes))
+	for i, fields := range indexes {
+		keys := make(bson.D, len(fields))
+		for j, f := range fields {
+			keys[j] = bson.E{Key: f.Key, Value: int(f.Dir)}
+		}
+		models[i] = mongo.IndexModel{Keys: keys}
+	}
+	_, err := s.coll.Indexes().CreateMany(context.Background(), models)
+	return err
+}
+
+// WithTransaction executa uma transação no banco de dados
 func (s *mongoStore[T]) WithTransaction(ctx context.Context, fn Transaction) (any, error) {
 	wc := writeconcern.Majority()
 	txnOptions := options.Transaction().SetWriteConcern(wc)

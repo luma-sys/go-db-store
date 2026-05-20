@@ -2084,3 +2084,89 @@ func TestMongoPerformance(t *testing.T) {
 		t.Logf("Busca com filtro: %v, resultados: %d", duration, len(results))
 	})
 }
+
+// ==================== TESTES ENSURE INDEX ====================
+
+func listIndexNames(t *testing.T, coll *mongo.Collection) []string {
+	t.Helper()
+	specs, err := coll.Indexes().ListSpecifications(context.Background())
+	if err != nil {
+		t.Fatalf("listar índices: %v", err)
+	}
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name
+	}
+	return names
+}
+
+func TestEnsureIndexesASC_Single(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexesASC("name"))
+	assert.Contains(t, listIndexNames(t, collection), "name_1")
+}
+
+func TestEnsureIndexesASC_Compound(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexesASC("name", "age"))
+	assert.Contains(t, listIndexNames(t, collection), "name_1_age_1")
+}
+
+func TestEnsureIndexesDESC_Single(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexesDESC("name"))
+	assert.Contains(t, listIndexNames(t, collection), "name_-1")
+}
+
+func TestEnsureIndexes_MixedDirection(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(
+		IndexField{Key: "name", Dir: ASC},
+		IndexField{Key: "score", Dir: DESC},
+	))
+	assert.Contains(t, listIndexNames(t, collection), "name_1_score_-1")
+}
+
+func TestEnsureIndexes_Batch(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureManyIndexes(
+		[]IndexField{{Key: "name", Dir: ASC}},
+		[]IndexField{{Key: "age", Dir: DESC}},
+		[]IndexField{{Key: "name", Dir: ASC}, {Key: "score", Dir: DESC}},
+	))
+
+	names := listIndexNames(t, collection)
+	assert.Contains(t, names, "name_1")
+	assert.Contains(t, names, "age_-1")
+	assert.Contains(t, names, "name_1_score_-1")
+}
+
+func TestEnsureIndex_MultipleIndexes(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexesASC("name"))
+	assert.NoError(t, st.EnsureIndexesASC("age"))
+	assert.NoError(t, st.EnsureIndexesDESC("score"))
+
+	names := listIndexNames(t, collection)
+	assert.Contains(t, names, "name_1")
+	assert.Contains(t, names, "age_1")
+	assert.Contains(t, names, "score_-1")
+}
