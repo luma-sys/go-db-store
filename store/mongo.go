@@ -35,7 +35,8 @@ func (s *mongoStore[T]) EnsureIndexes(defs ...*IndexDefinition) error {
 		return fmt.Errorf("nenhum índice fornecido")
 	}
 
-	specs, err := s.coll.Indexes().ListSpecifications(context.Background())
+	ctx := context.Background()
+	specs, err := s.coll.Indexes().ListSpecifications(ctx)
 	if err != nil {
 		return err
 	}
@@ -57,16 +58,30 @@ func (s *mongoStore[T]) EnsureIndexes(defs ...*IndexDefinition) error {
 				continue
 			}
 
-			// Preferimos comportamento idempotente: se já existe um índice com o mesmo
-			// nome, mesmo com opções diferentes, não propagamos erro.
-			continue
+			if err = s.coll.Indexes().DropOne(ctx, name); err != nil {
+				return err
+			}
 		}
 
-		if _, err = s.coll.Indexes().CreateOne(context.Background(), model); err != nil {
+		if _, err = s.coll.Indexes().CreateOne(ctx, model); err != nil {
 			if isIgnorableIndexConflict(err) {
-				continue
+				spec, specErr := s.findIndexSpecByName(ctx, name)
+				if specErr != nil {
+					return specErr
+				}
+				if spec != nil && indexMatchesDefinition(*spec, def, model) {
+					continue
+				}
 			}
 			return err
+		}
+
+		spec, specErr := s.findIndexSpecByName(ctx, name)
+		if specErr != nil {
+			return specErr
+		}
+		if spec != nil {
+			existing[name] = *spec
 		}
 	}
 
@@ -153,6 +168,21 @@ func indexMatchesDefinition(spec mongo.IndexSpecification, def *IndexDefinition,
 
 func getBoolValue(v *bool) bool {
 	return v != nil && *v
+}
+
+func (s *mongoStore[T]) findIndexSpecByName(ctx context.Context, name string) (*mongo.IndexSpecification, error) {
+	specs, err := s.coll.Indexes().ListSpecifications(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, spec := range specs {
+		if spec.Name == name {
+			return &spec, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func isIgnorableIndexConflict(err error) bool {

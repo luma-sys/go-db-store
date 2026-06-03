@@ -2209,7 +2209,7 @@ func TestEnsureIndex_Unique(t *testing.T) {
 	assert.ErrorAs(t, err, &mongoErr)
 }
 
-func TestEnsureIndexes_ConflictingExistingIndexDoesNotError(t *testing.T) {
+func TestEnsureIndexes_ConflictingExistingIndexRecreatesIndex(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
@@ -2219,13 +2219,33 @@ func TestEnsureIndexes_ConflictingExistingIndexDoesNotError(t *testing.T) {
 
 	spec, ok := getIndexSpecByName(t, collection, "name_1")
 	if assert.True(t, ok) {
-		assert.False(t, getBoolValue(spec.Unique))
+		assert.True(t, getBoolValue(spec.Unique))
 	}
 
 	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name"})
 	assert.NoError(t, err)
 	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "2", Name: "same-name"})
+	assert.Error(t, err)
+}
+
+func TestEnsureIndexes_ConflictingUniqueRecreationReturnsErrorOnDuplicates(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	_, err := collection.InsertMany(context.Background(), []any{
+		TestEntity{ID: "1", Name: "same-name"},
+		TestEntity{ID: "2", Name: "same-name"},
+	})
 	assert.NoError(t, err)
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc()))
+	err = st.EnsureIndexes(NewIndex("name").Asc().Unique())
+	assert.Error(t, err)
+
+	spec, ok := getIndexSpecByName(t, collection, "name_1")
+	assert.False(t, ok)
+	assert.Empty(t, spec.Name)
 }
 
 func TestEnsureIndex_UniqueCompound(t *testing.T) {
