@@ -491,13 +491,13 @@ func TestMongoFindOne(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		filter  map[string]interface{}
+		filter  map[string]any
 		check   func(*testing.T, *TestEntity)
 		wantErr bool
 	}{
 		{
 			name:   "deve encontrar documento com filtro simples",
-			filter: map[string]interface{}{"name": "João Silva"},
+			filter: map[string]any{"name": "João Silva"},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "1", result.ID)
 				assert.Equal(t, "João Silva", result.Name)
@@ -508,7 +508,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com filtro booleano",
-			filter: map[string]interface{}{"active": false},
+			filter: map[string]any{"active": false},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "3", result.ID)
 				assert.False(t, result.Active)
@@ -516,7 +516,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com múltiplos filtros",
-			filter: map[string]interface{}{"active": true, "age": 30},
+			filter: map[string]any{"active": true, "age": 30},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "2", result.ID)
 				assert.Equal(t, "Maria Santos", result.Name)
@@ -526,7 +526,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com operador $gt",
-			filter: map[string]interface{}{"age": bson.M{"$gt": 30}},
+			filter: map[string]any{"age": bson.M{"$gt": 30}},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "3", result.ID)
 				assert.Greater(t, result.Age, 30)
@@ -534,14 +534,14 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com operador $gte",
-			filter: map[string]interface{}{"age": bson.M{"$gte": 30}},
+			filter: map[string]any{"age": bson.M{"$gte": 30}},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.GreaterOrEqual(t, result.Age, 30)
 			},
 		},
 		{
 			name:   "deve encontrar documento com operador $lt",
-			filter: map[string]interface{}{"score": bson.M{"$lt": 75}},
+			filter: map[string]any{"score": bson.M{"$lt": 75}},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "3", result.ID)
 				assert.Less(t, result.Score, 75.0)
@@ -549,7 +549,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com operador $in",
-			filter: map[string]interface{}{"name": bson.M{"$in": []string{"Maria Santos", "Não Existe"}}},
+			filter: map[string]any{"name": bson.M{"$in": []string{"Maria Santos", "Não Existe"}}},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "2", result.ID)
 				assert.Equal(t, "Maria Santos", result.Name)
@@ -557,7 +557,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar documento com operador $regex",
-			filter: map[string]interface{}{"name": bson.M{"$regex": "^João"}},
+			filter: map[string]any{"name": bson.M{"$regex": "^João"}},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "1", result.ID)
 				assert.Contains(t, result.Name, "João")
@@ -565,17 +565,17 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:    "deve retornar erro quando não encontra documento",
-			filter:  map[string]interface{}{"name": "Não Existe"},
+			filter:  map[string]any{"name": "Não Existe"},
 			wantErr: true,
 		},
 		{
 			name:    "deve retornar erro quando filtro não corresponde",
-			filter:  map[string]interface{}{"age": 999},
+			filter:  map[string]any{"age": 999},
 			wantErr: true,
 		},
 		{
 			name:   "deve encontrar documento com filtro vazio (retorna primeiro)",
-			filter: map[string]interface{}{},
+			filter: map[string]any{},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.NotNil(t, result)
 				assert.NotEmpty(t, result.ID)
@@ -583,7 +583,7 @@ func TestMongoFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar por ID usando _id",
-			filter: map[string]interface{}{"_id": "2"},
+			filter: map[string]any{"_id": "2"},
 			check: func(t *testing.T, result *TestEntity) {
 				assert.Equal(t, "2", result.ID)
 				assert.Equal(t, "Maria Santos", result.Name)
@@ -1628,7 +1628,7 @@ func TestMongoDeleteOne(t *testing.T) {
 	tests := []struct {
 		name    string
 		setup   func()
-		filter  map[string]interface{}
+		filter  map[string]any
 		check   func(*testing.T)
 		wantErr bool
 	}{
@@ -1638,7 +1638,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "João", Age: 25})
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria", Age: 30})
 			},
-			filter: map[string]interface{}{"name": "João"},
+			filter: map[string]any{"name": "João"},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "1"))
 				assert.True(t, store.Has(ctx, "2"))
@@ -1650,7 +1650,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc1", Active: true})
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc2", Active: false})
 			},
-			filter: map[string]interface{}{"active": true},
+			filter: map[string]any{"active": true},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "1"))
 				assert.True(t, store.Has(ctx, "2"))
@@ -1663,7 +1663,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 35})
 				store.Save(ctx, &TestEntity{ID: "3", Name: "Doc", Age: 40})
 			},
-			filter: map[string]interface{}{"age": bson.M{"$gt": 30}},
+			filter: map[string]any{"age": bson.M{"$gt": 30}},
 			check: func(t *testing.T) {
 				// Deve deletar apenas um (o primeiro que encontrar > 30)
 				count, _ := store.Count(ctx, bson.M{})
@@ -1676,7 +1676,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc", Age: 25})
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 30})
 			},
-			filter: map[string]interface{}{"age": bson.M{"$gte": 30}},
+			filter: map[string]any{"age": bson.M{"$gte": 30}},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "2"))
 				count, _ := store.Count(ctx, bson.M{})
@@ -1689,7 +1689,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "Doc", Age: 20})
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Doc", Age: 30})
 			},
-			filter: map[string]interface{}{"age": bson.M{"$lt": 25}},
+			filter: map[string]any{"age": bson.M{"$lt": 25}},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "1"))
 				count, _ := store.Count(ctx, bson.M{})
@@ -1703,7 +1703,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria"})
 				store.Save(ctx, &TestEntity{ID: "3", Name: "Pedro"})
 			},
-			filter: map[string]interface{}{"name": bson.M{"$in": []string{"João", "Maria"}}},
+			filter: map[string]any{"name": bson.M{"$in": []string{"João", "Maria"}}},
 			check: func(t *testing.T) {
 				// Deve deletar apenas um
 				count, _ := store.Count(ctx, bson.M{})
@@ -1716,7 +1716,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "João Silva"})
 				store.Save(ctx, &TestEntity{ID: "2", Name: "Maria Santos"})
 			},
-			filter: map[string]interface{}{"name": bson.M{"$regex": "Silva"}},
+			filter: map[string]any{"name": bson.M{"$regex": "Silva"}},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "1"))
 				assert.True(t, store.Has(ctx, "2"))
@@ -1729,7 +1729,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "2", Name: "João", Age: 30})
 				store.Save(ctx, &TestEntity{ID: "3", Name: "Maria", Age: 25})
 			},
-			filter: map[string]interface{}{"name": "João", "age": 25},
+			filter: map[string]any{"name": "João", "age": 25},
 			check: func(t *testing.T) {
 				assert.False(t, store.Has(ctx, "1"))
 				assert.True(t, store.Has(ctx, "2"))
@@ -1741,7 +1741,7 @@ func TestMongoDeleteOne(t *testing.T) {
 			setup: func() {
 				store.Save(ctx, &TestEntity{ID: "1", Name: "João"})
 			},
-			filter:  map[string]interface{}{"name": "NaoExiste"},
+			filter:  map[string]any{"name": "NaoExiste"},
 			wantErr: true,
 		},
 		{
@@ -1753,7 +1753,7 @@ func TestMongoDeleteOne(t *testing.T) {
 		{
 			name:    "deve retornar erro quando filtro é vazio",
 			setup:   func() {},
-			filter:  map[string]interface{}{},
+			filter:  map[string]any{},
 			wantErr: true,
 		},
 		{
@@ -1763,7 +1763,7 @@ func TestMongoDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestEntity{ID: "delete-me", Name: "Deletar"})
 				store.Save(ctx, &TestEntity{ID: "keep-2", Name: "Manter 2"})
 			},
-			filter: map[string]interface{}{"name": "Deletar"},
+			filter: map[string]any{"name": "Deletar"},
 			check: func(t *testing.T) {
 				assert.True(t, store.Has(ctx, "keep-1"))
 				assert.False(t, store.Has(ctx, "delete-me"))
@@ -2100,54 +2100,71 @@ func listIndexNames(t *testing.T, coll *mongo.Collection) []string {
 	return names
 }
 
-func TestEnsureIndexesASC_Single(t *testing.T) {
+func getIndexSpecByName(t *testing.T, coll *mongo.Collection, name string) (mongo.IndexSpecification, bool) {
+	t.Helper()
+	specs, err := coll.Indexes().ListSpecifications(context.Background())
+	if err != nil {
+		t.Fatalf("listar índices: %v", err)
+	}
+	for _, spec := range specs {
+		if spec.Name == name {
+			return spec, true
+		}
+	}
+	return mongo.IndexSpecification{}, false
+}
+
+func TestEnsureIndex_ASC_Single(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureIndexesASC("name"))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc()))
 	assert.Contains(t, listIndexNames(t, collection), "name_1")
 }
 
-func TestEnsureIndexesASC_Compound(t *testing.T) {
+func TestEnsureIndex_ASC_Compound(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureIndexesASC("name", "age"))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name", "age").Asc()))
 	assert.Contains(t, listIndexNames(t, collection), "name_1_age_1")
 }
 
-func TestEnsureIndexesDESC_Single(t *testing.T) {
+func TestEnsureIndex_DESC_Single(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureIndexesDESC("name"))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Desc()))
 	assert.Contains(t, listIndexNames(t, collection), "name_-1")
 }
 
-func TestEnsureIndexes_MixedDirection(t *testing.T) {
+func TestEnsureIndex_MixedDirection(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(NewIndex().Fields(
+		IndexField{Key: "name", Dir: ASC},
+		IndexField{Key: "score", Dir: DESC},
+	)))
+	assert.Contains(t, listIndexNames(t, collection), "name_1_score_-1")
+}
+
+func TestEnsureIndex_Batch(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
 	assert.NoError(t, st.EnsureIndexes(
-		IndexField{Key: "name", Dir: ASC},
-		IndexField{Key: "score", Dir: DESC},
-	))
-	assert.Contains(t, listIndexNames(t, collection), "name_1_score_-1")
-}
-
-func TestEnsureIndexes_Batch(t *testing.T) {
-	collection, cleanup := setupMongoTest(t)
-	defer cleanup()
-
-	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureManyIndexes(
-		[]IndexField{{Key: "name", Dir: ASC}},
-		[]IndexField{{Key: "age", Dir: DESC}},
-		[]IndexField{{Key: "name", Dir: ASC}, {Key: "score", Dir: DESC}},
+		NewIndex("name").Asc(),
+		NewIndex("age").Desc(),
+		NewIndex().Fields(
+			IndexField{Key: "name", Dir: ASC},
+			IndexField{Key: "score", Dir: DESC},
+		),
 	))
 
 	names := listIndexNames(t, collection)
@@ -2161,12 +2178,86 @@ func TestEnsureIndex_MultipleIndexes(t *testing.T) {
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureIndexesASC("name"))
-	assert.NoError(t, st.EnsureIndexesASC("age"))
-	assert.NoError(t, st.EnsureIndexesDESC("score"))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc()))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("age").Asc()))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("score").Desc()))
 
 	names := listIndexNames(t, collection)
 	assert.Contains(t, names, "name_1")
 	assert.Contains(t, names, "age_1")
 	assert.Contains(t, names, "score_-1")
+}
+
+func TestEnsureIndex_Unique(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().Unique()))
+
+	spec, ok := getIndexSpecByName(t, collection, "name_1")
+	if assert.True(t, ok) {
+		assert.NotNil(t, spec.Unique)
+		assert.True(t, *spec.Unique)
+	}
+
+	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name"})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "2", Name: "same-name"})
+	assert.Error(t, err)
+	mongoErr := mongo.WriteException{}
+	assert.ErrorAs(t, err, &mongoErr)
+}
+
+func TestEnsureIndexes_ConflictingExistingIndexDoesNotError(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc()))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().Unique()))
+
+	spec, ok := getIndexSpecByName(t, collection, "name_1")
+	if assert.True(t, ok) {
+		assert.False(t, getBoolValue(spec.Unique))
+	}
+
+	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name"})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "2", Name: "same-name"})
+	assert.NoError(t, err)
+}
+
+func TestEnsureIndex_UniqueCompound(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	assert.NoError(t, st.EnsureIndexes(
+		NewIndex("name", "age").Asc().Unique(),
+		NewIndex("score").Desc(),
+	))
+
+	spec, ok := getIndexSpecByName(t, collection, "name_1_age_1")
+	if assert.True(t, ok) {
+		assert.NotNil(t, spec.Unique)
+		assert.True(t, *spec.Unique)
+	}
+	assert.Contains(t, listIndexNames(t, collection), "score_-1")
+
+	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name", Age: 10})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "2", Name: "same-name", Age: 10})
+	assert.Error(t, err)
+	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "3", Name: "same-name", Age: 11})
+	assert.NoError(t, err)
+}
+
+func TestEnsureIndex_NilDefinition(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	st := NewMongoStore[TestEntity](collection)
+	err := st.EnsureIndexes(nil)
+	assert.EqualError(t, err, "definição de índice inválida")
 }

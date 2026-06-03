@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -28,46 +29,139 @@ func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 	}
 }
 
-// EnsureIndexesASC cria índices para vários campos em ordem crescente
-func (s *mongoStore[T]) EnsureIndexesASC(fields ...string) error {
-	ix := make([]IndexField, len(fields))
-	for i, f := range fields {
-		ix[i] = IndexField{Key: f, Dir: ASC}
+// EnsureIndexes cria um ou mais índices com opções.
+func (s *mongoStore[T]) EnsureIndexes(defs ...*IndexDefinition) error {
+	if len(defs) == 0 {
+		return fmt.Errorf("nenhum índice fornecido")
 	}
-	return s.EnsureIndexes(ix...)
+
+	specs, err := s.coll.Indexes().ListSpecifications(context.Background())
+	if err != nil {
+		return err
+	}
+
+	existing := make(map[string]mongo.IndexSpecification, len(specs))
+	for _, spec := range specs {
+		existing[spec.Name] = spec
+	}
+
+	for _, def := range defs {
+		model, err := buildMongoIndexModel(def)
+		if err != nil {
+			return err
+		}
+
+		name := getMongoIndexName(def)
+		if spec, ok := existing[name]; ok {
+			if indexMatchesDefinition(spec, def, model) {
+				continue
+			}
+
+			// Preferimos comportamento idempotente: se já existe um índice com o mesmo
+			// nome, mesmo com opções diferentes, não propagamos erro.
+			continue
+		}
+
+		if _, err = s.coll.Indexes().CreateOne(context.Background(), model); err != nil {
+			if isIgnorableIndexConflict(err) {
+				continue
+			}
+			return err
+		}
+	}
+
+	return err
 }
 
-// EnsureIndexesDESC cria índices para vários campos em ordem decrescente
-func (s *mongoStore[T]) EnsureIndexesDESC(fields ...string) error {
-	ix := make([]IndexField, len(fields))
-	for i, f := range fields {
-		ix[i] = IndexField{Key: f, Dir: DESC}
+func buildMongoIndexModel(def *IndexDefinition) (mongo.IndexModel, error) {
+	if def == nil {
+		return mongo.IndexModel{}, fmt.Errorf("definição de índice inválida")
 	}
-	return s.EnsureIndexes(ix...)
-}
 
-// EnsureIndexes cria índices para vários campos
-func (s *mongoStore[T]) EnsureIndexes(fields ...IndexField) error {
-	keys := make(bson.D, len(fields))
-	for i, f := range fields {
+	if len(def.fields) == 0 {
+		return mongo.IndexModel{}, fmt.Errorf("nenhum campo de índice fornecido")
+	}
+
+	keys := make(bson.D, len(def.fields))
+	for i, f := range def.fields {
+		if f.Key == "" {
+			return mongo.IndexModel{}, fmt.Errorf("campo de índice inválido na posição %d", i)
+		}
 		keys[i] = bson.E{Key: f.Key, Value: int(f.Dir)}
 	}
-	_, err := s.coll.Indexes().CreateOne(context.Background(), mongo.IndexModel{Keys: keys})
-	return err
+
+	model := mongo.IndexModel{Keys: keys}
+	if def.unique || def.sparse || def.name != "" {
+		opts := options.Index()
+		if def.unique {
+			opts.SetUnique(true)
+		}
+		if def.sparse {
+			opts.SetSparse(true)
+		}
+		if def.name != "" {
+			opts.SetName(def.name)
+		}
+		model.Options = opts
+	}
+
+	return model, nil
 }
 
-// EnsureManyIndexes cria índices para vários campos em batch
-func (s *mongoStore[T]) EnsureManyIndexes(indexes ...[]IndexField) error {
-	models := make([]mongo.IndexModel, len(indexes))
-	for i, fields := range indexes {
-		keys := make(bson.D, len(fields))
-		for j, f := range fields {
-			keys[j] = bson.E{Key: f.Key, Value: int(f.Dir)}
-		}
-		models[i] = mongo.IndexModel{Keys: keys}
+func getMongoIndexName(def *IndexDefinition) string {
+	if def != nil && def.name != "" {
+		return def.name
 	}
-	_, err := s.coll.Indexes().CreateMany(context.Background(), models)
-	return err
+
+	parts := make([]string, 0, len(def.fields)*2)
+	for _, field := range def.fields {
+		parts = append(parts, field.Key, fmt.Sprintf("%d", field.Dir))
+	}
+
+	return strings.Join(parts, "_")
+}
+
+func indexMatchesDefinition(spec mongo.IndexSpecification, def *IndexDefinition, model mongo.IndexModel) bool {
+	keys, ok := model.Keys.(bson.D)
+	if !ok {
+		return false
+	}
+
+	rawKeys, err := bson.Marshal(keys)
+	if err != nil {
+		return false
+	}
+
+	if !bytes.Equal(spec.KeysDocument, rawKeys) {
+		return false
+	}
+
+	if spec.Name != getMongoIndexName(def) {
+		return false
+	}
+
+	if getBoolValue(spec.Unique) != def.unique {
+		return false
+	}
+
+	if getBoolValue(spec.Sparse) != def.sparse {
+		return false
+	}
+
+	return true
+}
+
+func getBoolValue(v *bool) bool {
+	return v != nil && *v
+}
+
+func isIgnorableIndexConflict(err error) bool {
+	var cmdErr mongo.CommandError
+	if !errors.As(err, &cmdErr) {
+		return false
+	}
+
+	return cmdErr.Name == "IndexKeySpecsConflict" || cmdErr.Name == "IndexOptionsConflict"
 }
 
 // WithTransaction executa uma transação no banco de dados
@@ -157,7 +251,7 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	return &result, nil
 }
 
-func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T, error) {
+func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
 	var result T
 
 	err := s.coll.FindOne(ctx, f).Decode(&result)
@@ -460,7 +554,7 @@ func (s *mongoStore[T]) Delete(ctx context.Context, id any) error {
 	return nil
 }
 
-func (s *mongoStore[T]) DeleteOne(ctx context.Context, f map[string]interface{}) error {
+func (s *mongoStore[T]) DeleteOne(ctx context.Context, f map[string]any) error {
 	if f == nil || len(f) == 0 {
 		return fmt.Errorf("filtro não pode ser nulo ou vazio")
 	}

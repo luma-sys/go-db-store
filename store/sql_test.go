@@ -462,13 +462,13 @@ func TestSQLFindOne(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		filter  map[string]interface{}
+		filter  map[string]any
 		check   func(*testing.T, *TestSQLEntity)
 		wantErr bool
 	}{
 		{
 			name:   "deve encontrar registro com filtro simples",
-			filter: map[string]interface{}{"name": "João Silva"},
+			filter: map[string]any{"name": "João Silva"},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "João Silva", result.Name)
 				assert.Equal(t, 25, result.Age)
@@ -478,7 +478,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com filtro booleano",
-			filter: map[string]interface{}{"active": false},
+			filter: map[string]any{"active": false},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Pedro Costa", result.Name)
 				assert.False(t, result.Active)
@@ -486,7 +486,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com múltiplos filtros",
-			filter: map[string]interface{}{"active": true, "age": 30},
+			filter: map[string]any{"active": true, "age": 30},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Maria Santos", result.Name)
 				assert.Equal(t, 30, result.Age)
@@ -495,7 +495,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com operador __gt",
-			filter: map[string]interface{}{"age__gt": 30},
+			filter: map[string]any{"age__gt": 30},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Pedro Costa", result.Name)
 				assert.Greater(t, result.Age, 30)
@@ -503,14 +503,14 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com operador __gte",
-			filter: map[string]interface{}{"age__gte": 30},
+			filter: map[string]any{"age__gte": 30},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.GreaterOrEqual(t, result.Age, 30)
 			},
 		},
 		{
 			name:   "deve encontrar registro com operador __lt",
-			filter: map[string]interface{}{"score__lt": 75},
+			filter: map[string]any{"score__lt": 75},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Pedro Costa", result.Name)
 				assert.Less(t, result.Score, 75.0)
@@ -518,7 +518,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com operador __lte",
-			filter: map[string]interface{}{"age__lte": 25},
+			filter: map[string]any{"age__lte": 25},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "João Silva", result.Name)
 				assert.LessOrEqual(t, result.Age, 25)
@@ -526,7 +526,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com operador __like",
-			filter: map[string]interface{}{"name__like": "%Silva%"},
+			filter: map[string]any{"name__like": "%Silva%"},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "João Silva", result.Name)
 				assert.Contains(t, result.Name, "Silva")
@@ -534,38 +534,38 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar registro com operador __like no início",
-			filter: map[string]interface{}{"name__like": "Maria%"},
+			filter: map[string]any{"name__like": "Maria%"},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Maria Santos", result.Name)
 			},
 		},
 		{
 			name:   "deve encontrar registro com operador __in com []string",
-			filter: map[string]interface{}{"name__in": []string{"Maria Santos", "Não Existe"}},
+			filter: map[string]any{"name__in": []string{"Maria Santos", "Não Existe"}},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, "Maria Santos", result.Name)
 			},
 		},
 		{
 			name:   "deve encontrar registro com operador __in com []int",
-			filter: map[string]interface{}{"age__in": []int{25, 99}},
+			filter: map[string]any{"age__in": []int{25, 99}},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, 25, result.Age)
 			},
 		},
 		{
 			name:    "deve retornar erro quando não encontra registro",
-			filter:  map[string]interface{}{"name": "Não Existe"},
+			filter:  map[string]any{"name": "Não Existe"},
 			wantErr: true,
 		},
 		{
 			name:    "deve retornar erro quando filtro não corresponde",
-			filter:  map[string]interface{}{"age": 999},
+			filter:  map[string]any{"age": 999},
 			wantErr: true,
 		},
 		{
 			name:   "deve encontrar registro com filtro vazio (retorna primeiro)",
-			filter: map[string]interface{}{},
+			filter: map[string]any{},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.NotNil(t, result)
 				assert.NotEmpty(t, result.Name)
@@ -573,7 +573,7 @@ func TestSQLFindOne(t *testing.T) {
 		},
 		{
 			name:   "deve encontrar por ID numérico",
-			filter: map[string]interface{}{"id": 1},
+			filter: map[string]any{"id": 1},
 			check: func(t *testing.T, result *TestSQLEntity) {
 				assert.Equal(t, 1, result.ID)
 				assert.Equal(t, "João Silva", result.Name)
@@ -1903,7 +1903,7 @@ func TestSQLDeleteOne(t *testing.T) {
 	tests := []struct {
 		name    string
 		setup   func()
-		filter  map[string]interface{}
+		filter  map[string]any
 		check   func(*testing.T)
 		wantErr bool
 	}{
@@ -1913,12 +1913,12 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 25})
 				store.Save(ctx, &TestSQLEntity{Name: "Maria", Age: 30})
 			},
-			filter: map[string]interface{}{"name": "João"},
+			filter: map[string]any{"name": "João"},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(1), *count)
 
-				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "Maria"})
+				result, _ := store.FindOne(ctx, map[string]any{"name": "Maria"})
 				assert.NotNil(t, result)
 			},
 		},
@@ -1928,12 +1928,12 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Doc1", Active: true})
 				store.Save(ctx, &TestSQLEntity{Name: "Doc2", Active: false})
 			},
-			filter: map[string]interface{}{"active": true},
+			filter: map[string]any{"active": true},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(1), *count)
 
-				result, _ := store.FindOne(ctx, map[string]interface{}{"active": false})
+				result, _ := store.FindOne(ctx, map[string]any{"active": false})
 				assert.NotNil(t, result)
 			},
 		},
@@ -1944,7 +1944,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 35})
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 40})
 			},
-			filter: map[string]interface{}{"age__gt": 30},
+			filter: map[string]any{"age__gt": 30},
 			check: func(t *testing.T) {
 				// Deve deletar apenas um (o primeiro que encontrar > 30)
 				count, _ := store.Count(ctx, map[string]any{})
@@ -1957,7 +1957,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 25})
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
 			},
-			filter: map[string]interface{}{"age__gte": 30},
+			filter: map[string]any{"age__gte": 30},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(1), *count)
@@ -1969,7 +1969,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 20})
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
 			},
-			filter: map[string]interface{}{"age__lt": 25},
+			filter: map[string]any{"age__lt": 25},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(1), *count)
@@ -1982,7 +1982,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 25})
 				store.Save(ctx, &TestSQLEntity{Name: "Doc", Age: 30})
 			},
-			filter: map[string]interface{}{"age__lte": 25},
+			filter: map[string]any{"age__lte": 25},
 			check: func(t *testing.T) {
 				// Deve deletar apenas um
 				count, _ := store.Count(ctx, map[string]any{})
@@ -1995,12 +1995,12 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "João Silva"})
 				store.Save(ctx, &TestSQLEntity{Name: "Maria Santos"})
 			},
-			filter: map[string]interface{}{"name__like": "%Silva%"},
+			filter: map[string]any{"name__like": "%Silva%"},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(1), *count)
 
-				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "Maria Santos"})
+				result, _ := store.FindOne(ctx, map[string]any{"name": "Maria Santos"})
 				assert.NotNil(t, result)
 			},
 		},
@@ -2011,7 +2011,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Maria"})
 				store.Save(ctx, &TestSQLEntity{Name: "Pedro"})
 			},
-			filter: map[string]interface{}{"name__in": []string{"João", "Maria"}},
+			filter: map[string]any{"name__in": []string{"João", "Maria"}},
 			check: func(t *testing.T) {
 				// Deve deletar apenas um
 				count, _ := store.Count(ctx, map[string]any{})
@@ -2025,12 +2025,12 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "João", Age: 30})
 				store.Save(ctx, &TestSQLEntity{Name: "Maria", Age: 25})
 			},
-			filter: map[string]interface{}{"name": "João", "age": 25},
+			filter: map[string]any{"name": "João", "age": 25},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(2), *count)
 
-				result, _ := store.FindOne(ctx, map[string]interface{}{"name": "João", "age": 30})
+				result, _ := store.FindOne(ctx, map[string]any{"name": "João", "age": 30})
 				assert.NotNil(t, result)
 			},
 		},
@@ -2039,7 +2039,7 @@ func TestSQLDeleteOne(t *testing.T) {
 			setup: func() {
 				store.Save(ctx, &TestSQLEntity{Name: "João"})
 			},
-			filter:  map[string]interface{}{"name": "NaoExiste"},
+			filter:  map[string]any{"name": "NaoExiste"},
 			wantErr: true,
 		},
 		{
@@ -2051,7 +2051,7 @@ func TestSQLDeleteOne(t *testing.T) {
 		{
 			name:    "deve retornar erro quando filtro é vazio",
 			setup:   func() {},
-			filter:  map[string]interface{}{},
+			filter:  map[string]any{},
 			wantErr: true,
 		},
 		{
@@ -2061,7 +2061,7 @@ func TestSQLDeleteOne(t *testing.T) {
 				store.Save(ctx, &TestSQLEntity{Name: "Deletar"})
 				store.Save(ctx, &TestSQLEntity{Name: "Manter 2"})
 			},
-			filter: map[string]interface{}{"name": "Deletar"},
+			filter: map[string]any{"name": "Deletar"},
 			check: func(t *testing.T) {
 				count, _ := store.Count(ctx, map[string]any{})
 				assert.Equal(t, int64(2), *count)

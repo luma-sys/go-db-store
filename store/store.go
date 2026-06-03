@@ -53,18 +53,6 @@ type DeleteResult struct {
 	DeletedCount int64
 }
 
-type IndexDirection int
-
-const (
-	ASC  IndexDirection = 1
-	DESC IndexDirection = -1
-)
-
-type IndexField struct {
-	Key string
-	Dir IndexDirection
-}
-
 type FindOptions struct {
 	Page    int64
 	Limit   int64 // the 0 value of limit means the will return all items
@@ -88,10 +76,7 @@ func (o *FindOptions) Initialize() {
 }
 
 type Store[T any] interface {
-	EnsureIndexesASC(fields ...string) error
-	EnsureIndexesDESC(fields ...string) error
-	EnsureIndexes(fields ...IndexField) error
-	EnsureManyIndexes(indexes ...[]IndexField) error
+	EnsureIndexes(defs ...*IndexDefinition) error
 
 	WithTransaction(ctx context.Context, fn Transaction) (any, error)
 	Has(ctx context.Context, id any) bool
@@ -99,7 +84,7 @@ type Store[T any] interface {
 
 	FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error)
 	FindById(ctx context.Context, id any) (*T, error)
-	FindOne(ctx context.Context, f map[string]interface{}) (*T, error)
+	FindOne(ctx context.Context, f map[string]any) (*T, error)
 
 	Save(ctx context.Context, e *T) (*T, error)
 	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error)
@@ -112,6 +97,6 @@ type Store[T any] interface {
 	UpsertMany(ctx context.Context, e []T, f []StoreUpsertFilter) (*BulkWriteResult, error)
 
 	Delete(ctx context.Context, id any) error
-	DeleteOne(ctx context.Context, f map[string]interface{}) error
+	DeleteOne(ctx context.Context, f map[string]any) error
 	DeleteMany(ctx context.Context, f map[string]any) (*DeleteResult, error)
 }

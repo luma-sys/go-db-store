@@ -33,27 +33,9 @@ func NewSQLStore[T any](db *sql.DB, driver enum.DatabaseDriver, tableName string
 	}
 }
 
-// EnsureIndexesASC cria índices para vários campos em ordem crescente
-func (s *SQLStore[T]) EnsureIndexesASC(_ ...string) error {
-	// TODO: implement ASC index creation for SQL databases
-	return errors.New("method not implemented")
-}
-
-// EnsureIndexesDESC cria índices para vários campos em ordem decrescente
-func (s *SQLStore[T]) EnsureIndexesDESC(_ ...string) error {
-	// TODO: implement DESC index creation for SQL databases
-	return errors.New("method not implemented")
-}
-
-// EnsureIndexes cria índices para vários campos
-func (s *SQLStore[T]) EnsureIndexes(_ ...IndexField) error {
-	// TODO: implement mixed-direction index creation for SQL databases
-	return errors.New("method not implemented")
-}
-
-// EnsureManyIndexes cria índices para vários campos em batch
-func (s *SQLStore[T]) EnsureManyIndexes(_ ...[]IndexField) error {
-	// TODO: implement batch index creation for SQL databases
+// EnsureIndexes cria um ou mais índices com opções.
+func (s *SQLStore[T]) EnsureIndexes(_ ...*IndexDefinition) error {
+	// TODO: implement configurable batch index creation for SQL databases
 	return errors.New("method not implemented")
 }
 
@@ -134,7 +116,7 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	return nil, fmt.Errorf("registro não encontrado")
 }
 
-func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]interface{}) (*T, error) {
+func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
 	query += whereClause
@@ -877,7 +859,7 @@ func (s *SQLStore[T]) Delete(ctx context.Context, id any) error {
 }
 
 // DeleteOne remove um registro baseado em um filtro
-func (s *SQLStore[T]) DeleteOne(ctx context.Context, f map[string]interface{}) error {
+func (s *SQLStore[T]) DeleteOne(ctx context.Context, f map[string]any) error {
 	if f == nil || len(f) == 0 {
 		return fmt.Errorf("filtro não pode ser nulo ou vazio")
 	}
