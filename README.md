@@ -55,7 +55,7 @@ To use MongoDB store:
 package some_package
 
 import (
-    "go.mongodb.org/mongo-driver/mongo"
+    "go.mongodb.org/mongo-driver/v2/mongo"
     "github.com/luma-sys/go-db-store/store"
     ...
 )
