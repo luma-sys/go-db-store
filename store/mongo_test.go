@@ -2209,12 +2209,12 @@ func TestEnsureIndex_Unique(t *testing.T) {
 	assert.ErrorAs(t, err, &mongoErr)
 }
 
-func TestEnsureIndex_UniqueInsensitive(t *testing.T) {
+func TestEnsureIndex_UniqueAndInsensitive(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
-	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().UniqueInsensitive()))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().Unique().Insensitive()))
 
 	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name"})
 	assert.NoError(t, err)
@@ -2243,13 +2243,13 @@ func TestEnsureIndexes_ConflictingExistingIndexRecreatesIndex(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestEnsureIndexes_ConflictingUniqueInsensitiveRecreatesIndex(t *testing.T) {
+func TestEnsureIndexes_ConflictingUniqueAndInsensitiveRecreatesIndex(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
 
 	st := NewMongoStore[TestEntity](collection)
 	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().Unique()))
-	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().UniqueInsensitive()))
+	assert.NoError(t, st.EnsureIndexes(NewIndex("name").Asc().Unique().Insensitive()))
 
 	_, err := collection.InsertOne(context.Background(), TestEntity{ID: "1", Name: "same-name"})
 	assert.NoError(t, err)
