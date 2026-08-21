@@ -22,6 +22,14 @@ type mongoStore[T any] struct {
 	coll *mongo.Collection
 }
 
+type mongoIndexDocument struct {
+	Name      string             `bson:"name"`
+	Keys      bson.Raw           `bson:"key"`
+	Unique    *bool              `bson:"unique"`
+	Sparse    *bool              `bson:"sparse"`
+	Collation *options.Collation `bson:"collation"`
+}
+
 // NewMongoStore cria um novo mongoStore
 func NewMongoStore[T any](coll *mongo.Collection) Store[T] {
 	return &mongoStore[T]{
@@ -36,14 +44,14 @@ func (s *mongoStore[T]) EnsureIndexes(defs ...*IndexDefinition) error {
 	}
 
 	ctx := context.Background()
-	specs, err := s.coll.Indexes().ListSpecifications(ctx)
+	docs, err := s.listIndexDocuments(ctx)
 	if err != nil {
 		return err
 	}
 
-	existing := make(map[string]mongo.IndexSpecification, len(specs))
-	for _, spec := range specs {
-		existing[spec.Name] = spec
+	existing := make(map[string]mongoIndexDocument, len(docs))
+	for _, doc := range docs {
+		existing[doc.Name] = doc
 	}
 
 	for _, def := range defs {
@@ -65,23 +73,23 @@ func (s *mongoStore[T]) EnsureIndexes(defs ...*IndexDefinition) error {
 
 		if _, err = s.coll.Indexes().CreateOne(ctx, model); err != nil {
 			if isIgnorableIndexConflict(err) {
-				spec, specErr := s.findIndexSpecByName(ctx, name)
-				if specErr != nil {
-					return specErr
+				doc, docErr := s.findIndexDocumentByName(ctx, name)
+				if docErr != nil {
+					return docErr
 				}
-				if spec != nil && indexMatchesDefinition(*spec, def, model) {
+				if doc != nil && indexMatchesDefinition(*doc, def, model) {
 					continue
 				}
 			}
 			return err
 		}
 
-		spec, specErr := s.findIndexSpecByName(ctx, name)
-		if specErr != nil {
-			return specErr
+		doc, docErr := s.findIndexDocumentByName(ctx, name)
+		if docErr != nil {
+			return docErr
 		}
-		if spec != nil {
-			existing[name] = *spec
+		if doc != nil {
+			existing[name] = *doc
 		}
 	}
 
@@ -111,6 +119,12 @@ func buildMongoIndexModel(def *IndexDefinition) (mongo.IndexModel, error) {
 		if def.unique {
 			opts.SetUnique(true)
 		}
+		if def.insensitive {
+			opts.SetCollation(&options.Collation{
+				Locale:   "en",
+				Strength: 2,
+			})
+		}
 		if def.sparse {
 			opts.SetSparse(true)
 		}
@@ -136,7 +150,7 @@ func getMongoIndexName(def *IndexDefinition) string {
 	return strings.Join(parts, "_")
 }
 
-func indexMatchesDefinition(spec mongo.IndexSpecification, def *IndexDefinition, model mongo.IndexModel) bool {
+func indexMatchesDefinition(spec mongoIndexDocument, def *IndexDefinition, model mongo.IndexModel) bool {
 	keys, ok := model.Keys.(bson.D)
 	if !ok {
 		return false
@@ -147,7 +161,7 @@ func indexMatchesDefinition(spec mongo.IndexSpecification, def *IndexDefinition,
 		return false
 	}
 
-	if !bytes.Equal(spec.KeysDocument, rawKeys) {
+	if !bytes.Equal(spec.Keys, rawKeys) {
 		return false
 	}
 
@@ -163,26 +177,57 @@ func indexMatchesDefinition(spec mongo.IndexSpecification, def *IndexDefinition,
 		return false
 	}
 
+	expectedCollation := expectedIndexCollation(def)
+	if !reflect.DeepEqual(spec.Collation, expectedCollation) {
+		return false
+	}
+
 	return true
+}
+
+func expectedIndexCollation(def *IndexDefinition) *options.Collation {
+	if def == nil || !def.insensitive {
+		return nil
+	}
+
+	return &options.Collation{
+		Locale:   "en",
+		Strength: 2,
+	}
 }
 
 func getBoolValue(v *bool) bool {
 	return v != nil && *v
 }
 
-func (s *mongoStore[T]) findIndexSpecByName(ctx context.Context, name string) (*mongo.IndexSpecification, error) {
-	specs, err := s.coll.Indexes().ListSpecifications(ctx)
+func (s *mongoStore[T]) findIndexDocumentByName(ctx context.Context, name string) (*mongoIndexDocument, error) {
+	docs, err := s.listIndexDocuments(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, spec := range specs {
-		if spec.Name == name {
-			return &spec, nil
+	for _, doc := range docs {
+		if doc.Name == name {
+			return &doc, nil
 		}
 	}
 
 	return nil, nil
+}
+
+func (s *mongoStore[T]) listIndexDocuments(ctx context.Context) ([]mongoIndexDocument, error) {
+	cursor, err := s.coll.Indexes().List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []mongoIndexDocument
+	if err = cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+
+	return docs, nil
 }
 
 func isIgnorableIndexConflict(err error) bool {

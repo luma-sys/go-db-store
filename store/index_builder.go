@@ -13,10 +13,11 @@ type IndexField struct {
 }
 
 type IndexDefinition struct {
-	fields []IndexField
-	unique bool
-	sparse bool
-	name   string
+	fields      []IndexField
+	unique      bool
+	insensitive bool
+	sparse      bool
+	name        string
 }
 
 func NewIndex(keys ...string) *IndexDefinition {
@@ -54,6 +55,11 @@ func (b *IndexDefinition) Optional() *IndexDefinition {
 
 func (b *IndexDefinition) Unique() *IndexDefinition {
 	b.unique = true
+	return b
+}
+
+func (b *IndexDefinition) Insensitive() *IndexDefinition {
+	b.insensitive = true
 	return b
 }
 
