@@ -851,6 +851,11 @@ func TestMongoCount(t *testing.T) {
 			wantCount: 3,
 		},
 		{
+			name:      "deve contar todos os documentos com filtro nil",
+			filter:    nil,
+			wantCount: 3,
+		},
+		{
 			name:      "deve contar com filtro booleano",
 			filter:    map[string]any{"active": true},
 			wantCount: 2,
@@ -885,6 +890,18 @@ func TestMongoCount(t *testing.T) {
 			assert.Equal(t, tt.wantCount, *count)
 		})
 	}
+
+	t.Run("deve contar todos os documentos sem filtro dentro de transação", func(t *testing.T) {
+		result, err := store.WithTransaction(ctx, func(txCtx TransactionContext) (any, error) {
+			return store.Count(txCtx.(context.Context), bson.M{})
+		})
+		if err != nil && strings.Contains(err.Error(), "replica set") {
+			t.Skip("Transações não suportadas nesta configuração do MongoDB")
+		}
+
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), *result.(*int64))
+	})
 }
 
 // ==================== TESTES HAS ====================
