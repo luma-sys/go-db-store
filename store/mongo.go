@@ -300,9 +300,15 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 
 // Count retorna o total de registros
 func (s *mongoStore[T]) Count(ctx context.Context, f map[string]any) (*int64, error) {
-	filter := s.mapToBsonD(f)
-
-	total, err := s.coll.CountDocuments(ctx, filter)
+	var total int64
+	var err error
+	// Sem filtro, a contagem exata varre a collection inteira; a estimativa lê os metadados,
+	// mas o Mongo a recusa dentro de transação
+	if len(f) == 0 && mongo.SessionFromContext(ctx) == nil {
+		total, err = s.coll.EstimatedDocumentCount(ctx)
+	} else {
+		total, err = s.coll.CountDocuments(ctx, s.mapToBsonD(f))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("erro ao quantificar documentos: %w", err)
 	}
