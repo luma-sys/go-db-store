@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -113,7 +115,7 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 		return s.parseRow(rows)
 	}
 
-	return nil, fmt.Errorf("registro não encontrado")
+	return nil, ErrNotFound
 }
 
 func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
@@ -148,7 +150,7 @@ func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error)
 		return result, nil
 	}
 
-	return nil, fmt.Errorf("documento não encontrado com filtro %v", f)
+	return nil, fmt.Errorf("%w com filtro %v", ErrNotFound, f)
 }
 
 // FindAll busca registros com paginação
@@ -381,11 +383,34 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 
 	if rowsAffected, err := result.RowsAffected(); err == nil {
 		if rowsAffected == 0 {
-			return nil, fmt.Errorf("registro não encontrado")
+			return nil, ErrNotFound
 		}
 	}
 
 	return e, nil
+}
+
+func (s *SQLStore[T]) UpdateFields(ctx context.Context, id any, fields map[string]any) (*T, error) {
+	keys := slices.Sorted(maps.Keys(fields))
+	setClauses := make([]string, 0, len(keys)+1)
+	values := make([]any, 0, len(keys)+2)
+	for _, key := range keys {
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", key))
+		values = append(values, fields[key])
+	}
+	setClauses = append(setClauses, "updated_at = ?")
+	values = append(values, time.Now(), id)
+
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", s.tableName, strings.Join(setClauses, ", "), s.primaryKey)
+	result, err := s.db.ExecContext(ctx, query, values...)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao atualizar campos do registro: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err == nil && rows == 0 {
+		return nil, ErrNotFound
+	}
+
+	return s.FindById(ctx, id)
 }
 
 // UpdateMany atualiza atributos de múltiplos registros baseado em um filtro

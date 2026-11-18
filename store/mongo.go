@@ -323,7 +323,7 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 	filter := bson.M{"_id": id}
 	err := s.coll.FindOne(ctx, filter).Decode(&result)
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, fmt.Errorf("documento não encontrado com id %s", id)
+		return nil, fmt.Errorf("%w com id %v", ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar documento: %w", err)
@@ -337,7 +337,7 @@ func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, erro
 
 	err := s.coll.FindOne(ctx, f).Decode(&result)
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, fmt.Errorf("documento não encontrado com filtro %v", f)
+		return nil, fmt.Errorf("%w com filtro %v", ErrNotFound, f)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("erro ao buscar documento: %w", err)
@@ -441,10 +441,30 @@ func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 	var updated T
 	err := s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, fmt.Errorf("documento não encontrado para atualização")
+		return nil, fmt.Errorf("%w para atualização", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("erro ao atualizar documento: %w", err)
+	}
+
+	return &updated, nil
+}
+
+// UpdateFields usa $set de documento, não de pipeline: num pipeline, string iniciada por $ vira
+// caminho de campo.
+func (s *mongoStore[T]) UpdateFields(ctx context.Context, id any, fields map[string]any) (*T, error) {
+	set := bson.M{"updatedAt": time.Now()}
+	maps.Copy(set, fields)
+
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+
+	var updated T
+	err := s.coll.FindOneAndUpdate(ctx, bson.M{"_id": id}, bson.M{"$set": set}, opts).Decode(&updated)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, fmt.Errorf("%w com id %v", ErrNotFound, id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("erro ao atualizar campos do documento: %w", err)
 	}
 
 	return &updated, nil

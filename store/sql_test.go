@@ -1422,6 +1422,53 @@ func TestSQLUpdate(t *testing.T) {
 
 // ==================== TESTES UPDATE MANY ====================
 
+func TestSQLUpdateFields(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	t.Run("grava só os campos informados", func(t *testing.T) {
+		saved, _ := store.Save(ctx, &TestSQLEntity{Name: "Original", Age: 25})
+
+		result, err := store.UpdateFields(ctx, saved.ID, map[string]any{"age": 30})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 30, result.Age)
+		assert.Equal(t, "Original", result.Name)
+	})
+
+	t.Run("registro inexistente devolve ErrNotFound", func(t *testing.T) {
+		_, err := store.UpdateFields(ctx, 9999, map[string]any{"age": 1})
+
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+}
+
+func TestSQLNotFoundWrapsErrNotFound(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+
+	_, err = store.FindById(ctx, 9999)
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	_, err = store.FindOne(ctx, map[string]any{"name": "nao-existe"})
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	_, err = store.Update(ctx, &TestSQLEntity{ID: 9999, Name: "x"})
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestSQLUpdateMany(t *testing.T) {
 	db, err := setupSQLDB()
 	if err != nil {

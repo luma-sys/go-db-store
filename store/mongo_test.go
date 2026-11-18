@@ -1075,6 +1075,67 @@ func TestMongoUpdate(t *testing.T) {
 	}
 }
 
+func TestMongoUpdateFields(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+
+	t.Run("grava só os campos informados e carimba updatedAt", func(t *testing.T) {
+		store.Save(ctx, &TestEntity{ID: "1", Name: "Original", Age: 25, Tags: []string{"a"}})
+
+		result, err := store.UpdateFields(ctx, "1", map[string]any{"age": 30})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 30, result.Age)
+		assert.Equal(t, "Original", result.Name)
+		assert.Equal(t, []string{"a"}, result.Tags)
+		assert.WithinDuration(t, time.Now(), result.UpdatedAt, time.Minute)
+	})
+
+	t.Run("nil limpa o campo", func(t *testing.T) {
+		store.Save(ctx, &TestEntity{ID: "2", Name: "Teste", Tags: []string{"a"}})
+
+		result, err := store.UpdateFields(ctx, "2", map[string]any{"tags": nil})
+
+		assert.NoError(t, err)
+		assert.Nil(t, result.Tags)
+	})
+
+	t.Run("valor iniciado por $ é gravado como literal", func(t *testing.T) {
+		store.Save(ctx, &TestEntity{ID: "3", Name: "Teste"})
+
+		result, err := store.UpdateFields(ctx, "3", map[string]any{"name": "$_id"})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "$_id", result.Name)
+	})
+
+	t.Run("documento inexistente devolve ErrNotFound", func(t *testing.T) {
+		_, err := store.UpdateFields(ctx, "nao-existe", map[string]any{"age": 1})
+
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+}
+
+func TestMongoNotFoundWrapsErrNotFound(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+
+	_, err := store.FindById(ctx, "nao-existe")
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	_, err = store.FindOne(ctx, map[string]any{"name": "nao-existe"})
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	_, err = store.Update(ctx, &TestEntity{ID: "nao-existe"})
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
 // ==================== TESTES UPDATE MANY ====================
 
 func TestMongoUpdateMany(t *testing.T) {
