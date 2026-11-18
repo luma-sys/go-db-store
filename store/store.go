@@ -64,6 +64,13 @@ type FindOptions struct {
 	SortBy  string
 	// Fields projeta a leitura: "campo" inclui, "-campo" exclui. Vazio devolve tudo.
 	Fields []string
+	// Sort ordena por vários campos, na ordem dada; quando preenchido, SortBy e OrderBy são ignorados.
+	Sort []SortField
+}
+
+type SortField struct {
+	Key  string
+	Desc bool
 }
 
 func (o *FindOptions) Initialize() {
@@ -91,7 +98,7 @@ type Store[T any] interface {
 	FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error)
 	FindById(ctx context.Context, id any) (*T, error)
 	FindOne(ctx context.Context, f map[string]any) (*T, error)
-	// FindOneWith é o FindOne com projeção e ordenação de FindOptions; paginação é ignorada.
+	// FindOneWith é o FindOne com Fields e Sort de FindOptions; os demais campos são ignorados.
 	FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error)
 
 	Save(ctx context.Context, e *T) (*T, error)

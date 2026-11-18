@@ -36,7 +36,7 @@ The following methods are available for both SQL and MongoDB stores:
 | **Count**             | Returns the number of entities by filtered query                       |
 | **FindById**          | Returns an entity by id                                                |
 | **FindOne**           | Returns one entity by match filter                                     |
-| **FindOneWith**       | FindOne with the projection and sort of `FindOptions`                  |
+| **FindOneWith**       | FindOne with the `Fields` and `Sort` of `FindOptions`                  |
 | **FindAll**           | Returns a paginated list of entities                                   |
 | **Save**              | Creates a new entity                                                   |
 | **SaveMany**          | Creates multiple entities                                              |
@@ -101,6 +101,17 @@ func SomeService(ctx context.Context, db *sql.DB) {
 ```go
 st.FindAll(ctx, filter, store.FindOptions{Fields: []string{"-secretHash"}})
 st.FindOneWith(ctx, filter, store.FindOptions{Fields: []string{"code", "name"}})
+```
+
+## Sorting
+
+`FindOptions.Sort` orders by several fields, in the given order, in `FindAll` and `FindOneWith`. When set, `SortBy` and `OrderBy` are ignored; without it they keep working as before (Mongo only — SQL never applied `SortBy`). `"id"` maps to `_id` on Mongo.
+
+```go
+st.FindAll(ctx, filter, store.FindOptions{Sort: []store.SortField{
+    {Key: "status"},
+    {Key: "responsible.name", Desc: true},
+}})
 ```
 
 ## Index Management

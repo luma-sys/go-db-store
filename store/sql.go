@@ -129,9 +129,14 @@ func (s *SQLStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts Fi
 		return nil, err
 	}
 
+	orderBy, err := sqlOrderBy(opts.Sort)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
-	query += whereClause
+	query += whereClause + orderBy
 
 	// Oracle não suporta LIMIT, usa FETCH FIRST
 	if s.driver == enum.DatabaseDriverOracle {
@@ -172,9 +177,15 @@ func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOp
 		return nil, err
 	}
 
+	// SortBy segue sem efeito no SQL: aplicá-lo agora mudaria a query de quem já usa o default createdAt.
+	orderBy, err := sqlOrderBy(opts.Sort)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
 	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
-	query += whereClause
+	query += whereClause + orderBy
 
 	if opts.Limit > 0 {
 		skip := page.Skip(opts.Page, opts.Limit)
@@ -1341,6 +1352,23 @@ func sqlColumns(fields []string) (string, error) {
 		}
 	}
 	return strings.Join(fields, ", "), nil
+}
+
+func sqlOrderBy(fields []SortField) (string, error) {
+	if len(fields) == 0 {
+		return "", nil
+	}
+	parts := make([]string, len(fields))
+	for i, f := range fields {
+		if !sqlIdentifier.MatchString(f.Key) {
+			return "", fmt.Errorf("nome de coluna inválido: %q", f.Key)
+		}
+		parts[i] = f.Key + " ASC"
+		if f.Desc {
+			parts[i] = f.Key + " DESC"
+		}
+	}
+	return " ORDER BY " + strings.Join(parts, ", "), nil
 }
 
 // parseRow Função auxiliar de parse de linha do banco

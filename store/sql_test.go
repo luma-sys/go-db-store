@@ -934,6 +934,39 @@ func TestSQLProjection(t *testing.T) {
 	})
 }
 
+func TestSQLSortByManyFields(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+	store.SaveMany(ctx, []TestSQLEntity{{Name: "Ana", Age: 30}, {Name: "Bia", Age: 20}, {Name: "Caio", Age: 30}})
+
+	t.Run("FindAll ordena pela lista de campos antes de paginar", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Limit: 2, Sort: []SortField{{Key: "age", Desc: true}, {Key: "name", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Caio", results[0].Name)
+		assert.Equal(t, "Ana", results[1].Name)
+	})
+
+	t.Run("FindOneWith aplica a ordenação", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, nil, FindOptions{Sort: []SortField{{Key: "age"}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Bia", result.Name)
+	})
+
+	t.Run("nome de coluna inválido devolve erro", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Sort: []SortField{{Key: "age; DROP TABLE x"}}})
+
+		assert.Error(t, err)
+	})
+}
+
 func TestSQLFindAll_IsNullOperators(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {

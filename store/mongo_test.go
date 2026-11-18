@@ -958,6 +958,44 @@ func TestMongoProjection(t *testing.T) {
 	})
 }
 
+func TestMongoSortByManyFields(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.SaveMany(ctx, []TestEntity{
+		{ID: "1", Name: "Ana", Age: 30},
+		{ID: "2", Name: "Bia", Age: 20},
+		{ID: "3", Name: "Caio", Age: 30},
+	})
+
+	t.Run("FindAll ordena pela lista de campos na ordem dada", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Sort: []SortField{{Key: "age", Desc: true}, {Key: "name"}}})
+
+		assert.NoError(t, err)
+		ids := []string{}
+		for _, r := range results {
+			ids = append(ids, r.ID)
+		}
+		assert.Equal(t, []string{"1", "3", "2"}, ids)
+	})
+
+	t.Run("Sort prevalece sobre SortBy e aceita id", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{SortBy: "name", Sort: []SortField{{Key: "id", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "3", results[0].ID)
+	})
+
+	t.Run("FindOneWith aplica a ordenação", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"age": 30}, FindOptions{Sort: []SortField{{Key: "name", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "3", result.ID)
+	})
+}
+
 func TestMongoCount(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()

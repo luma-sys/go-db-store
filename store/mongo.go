@@ -280,7 +280,9 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 	}
 
 	// Configurando a ordenação
-	if opts.SortBy != "" {
+	if len(opts.Sort) > 0 {
+		findOpts.SetSort(mongoSort(opts.Sort))
+	} else if opts.SortBy != "" {
 		sortValue := 1
 		if opts.OrderBy == "DESC" {
 			sortValue = -1
@@ -346,6 +348,9 @@ func (s *mongoStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts 
 	findOpts := options.FindOne()
 	if len(opts.Fields) > 0 {
 		findOpts.SetProjection(mongoProjection(opts.Fields))
+	}
+	if len(opts.Sort) > 0 {
+		findOpts.SetSort(mongoSort(opts.Sort))
 	}
 
 	err := s.coll.FindOne(ctx, f, findOpts).Decode(&result)
@@ -705,6 +710,21 @@ func mongoProjection(fields []string) bson.D {
 		}
 	}
 	return projection
+}
+
+func mongoSort(fields []SortField) bson.D {
+	sort := make(bson.D, len(fields))
+	for i, f := range fields {
+		key, dir := f.Key, 1
+		if key == "id" {
+			key = "_id"
+		}
+		if f.Desc {
+			dir = -1
+		}
+		sort[i] = bson.E{Key: key, Value: dir}
+	}
+	return sort
 }
 
 // MapToBsonD converte um mapa genérico para bson.D
