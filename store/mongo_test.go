@@ -1552,6 +1552,26 @@ func TestMongoUpdateMany(t *testing.T) {
 
 // ==================== TESTES UPSERT ====================
 
+func TestMongoUpdateMany_DollarValueIsLiteral(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.Save(ctx, &TestEntity{ID: "1", Name: "João", Tags: []string{"a"}})
+
+	_, err := store.UpdateMany(ctx, []EntityFieldsToUpdate{{
+		Filter: map[string]any{"_id": "1"},
+		Fields: map[string]any{"name": "$_id", "tags": []string{"$name"}},
+	}})
+	assert.NoError(t, err)
+
+	found, err := store.FindById(ctx, "1")
+	assert.NoError(t, err)
+	assert.Equal(t, "$_id", found.Name)
+	assert.Equal(t, []string{"$name"}, found.Tags)
+}
+
 func TestMongoUpsert(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()

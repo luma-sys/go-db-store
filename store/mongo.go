@@ -545,15 +545,10 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdat
 		// Adiciona todos os campos do map
 		maps.Copy(setFields, fb.Fields)
 
-		pipeline := mongo.Pipeline{
-			{
-				{Key: "$set", Value: setFields},
-			},
-		}
-
+		// $set de documento, não de pipeline: num pipeline, string iniciada por $ vira caminho de campo.
 		operations[i] = mongo.NewUpdateManyModel().
 			SetFilter(filter).
-			SetUpdate(pipeline).
+			SetUpdate(bson.M{"$set": setFields}).
 			SetUpsert(false)
 	}
 
