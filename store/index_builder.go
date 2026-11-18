@@ -18,6 +18,7 @@ type IndexDefinition struct {
 	insensitive bool
 	sparse      bool
 	name        string
+	partial     map[string]any
 }
 
 func NewIndex(keys ...string) *IndexDefinition {
@@ -60,6 +61,12 @@ func (b *IndexDefinition) Unique() *IndexDefinition {
 
 func (b *IndexDefinition) Insensitive() *IndexDefinition {
 	b.insensitive = true
+	return b
+}
+
+// Partial indexa só os documentos que casam com filter (partialFilterExpression); só Mongo.
+func (b *IndexDefinition) Partial(filter map[string]any) *IndexDefinition {
+	b.partial = filter
 	return b
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type mongoIndexDocument struct {
 	Unique    *bool              `bson:"unique"`
 	Sparse    *bool              `bson:"sparse"`
 	Collation *options.Collation `bson:"collation"`
+	Partial   bson.Raw           `bson:"partialFilterExpression"`
 }
 
 // NewMongoStore cria um novo mongoStore
@@ -113,28 +115,27 @@ func buildMongoIndexModel(def *IndexDefinition) (mongo.IndexModel, error) {
 		keys[i] = bson.E{Key: f.Key, Value: int(f.Dir)}
 	}
 
-	model := mongo.IndexModel{Keys: keys}
-	if def.unique || def.sparse || def.name != "" {
-		opts := options.Index()
-		if def.unique {
-			opts.SetUnique(true)
-		}
-		if def.insensitive {
-			opts.SetCollation(&options.Collation{
-				Locale:   "en",
-				Strength: 2,
-			})
-		}
-		if def.sparse {
-			opts.SetSparse(true)
-		}
-		if def.name != "" {
-			opts.SetName(def.name)
-		}
-		model.Options = opts
+	opts := options.Index()
+	if def.unique {
+		opts.SetUnique(true)
+	}
+	if def.insensitive {
+		opts.SetCollation(&options.Collation{
+			Locale:   "en",
+			Strength: 2,
+		})
+	}
+	if def.sparse {
+		opts.SetSparse(true)
+	}
+	if def.name != "" {
+		opts.SetName(def.name)
+	}
+	if def.partial != nil {
+		opts.SetPartialFilterExpression(sortedDoc(def.partial))
 	}
 
-	return model, nil
+	return mongo.IndexModel{Keys: keys, Options: opts}, nil
 }
 
 func getMongoIndexName(def *IndexDefinition) string {
@@ -177,12 +178,43 @@ func indexMatchesDefinition(spec mongoIndexDocument, def *IndexDefinition, model
 		return false
 	}
 
+	var expectedPartial bson.Raw
+	if def.partial != nil {
+		if expectedPartial, err = bson.Marshal(sortedDoc(def.partial)); err != nil {
+			return false
+		}
+	}
+	if !bytes.Equal(spec.Partial, expectedPartial) {
+		return false
+	}
+
 	expectedCollation := expectedIndexCollation(def)
 	if !reflect.DeepEqual(spec.Collation, expectedCollation) {
 		return false
 	}
 
 	return true
+}
+
+// sortedDoc ordena as chaves: map não tem ordem, e o filtro gravado no índice é comparado byte a byte.
+func sortedDoc(v any) any {
+	switch d := v.(type) {
+	case map[string]any:
+		out := make(bson.D, 0, len(d))
+		for _, k := range slices.Sorted(maps.Keys(d)) {
+			out = append(out, bson.E{Key: k, Value: sortedDoc(d[k])})
+		}
+		return out
+	case bson.M:
+		return sortedDoc(map[string]any(d))
+	case []any:
+		out := make([]any, len(d))
+		for i, e := range d {
+			out[i] = sortedDoc(e)
+		}
+		return out
+	}
+	return v
 }
 
 func expectedIndexCollation(def *IndexDefinition) *options.Collation {

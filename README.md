@@ -176,6 +176,16 @@ if err := st.EnsureManyIndexes(
 }
 ```
 
+### Partial indexes
+
+`Partial` indexes only the documents that match the filter (`partialFilterExpression`). The generated name stays the driver default (`keys_direction`), so an index already built by the driver is kept.
+
+```go
+st.EnsureIndexes(store.NewIndex("code").Unique().Partial(map[string]any{
+    "deletedAt": map[string]any{"$exists": false},
+}))
+```
+
 > **Note:** SQL implementation is not yet available. `EnsureIndex*` methods on SQL stores return `errors.New("method not implemented")`.
 
 ## Tests coverage

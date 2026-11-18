@@ -2554,6 +2554,49 @@ func TestEnsureIndex_UniqueCompound(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestEnsureIndex_Partial(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	st := NewMongoStore[TestEntity](collection)
+	partial := func() *IndexDefinition {
+		return NewIndex("name").Unique().Partial(map[string]any{
+			"active": true,
+			"age":    map[string]any{"$gt": 18, "$lt": 60},
+		})
+	}
+
+	assert.NoError(t, st.EnsureIndexes(partial()))
+	assert.Contains(t, listIndexNames(t, collection), "name_1")
+
+	_, err := collection.InsertOne(ctx, TestEntity{ID: "1", Name: "same", Active: false})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "2", Name: "same", Active: false})
+	assert.NoError(t, err, "fora do filtro parcial não conflita")
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "3", Name: "same", Active: true, Age: 30})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "4", Name: "same", Active: true, Age: 40})
+	assert.Error(t, err, "dentro do filtro parcial é único")
+
+	t.Run("mesma definição não recria o índice", func(t *testing.T) {
+		ms := st.(*mongoStore[TestEntity])
+		def := partial()
+		model, err := buildMongoIndexModel(def)
+		assert.NoError(t, err)
+		doc, err := ms.findIndexDocumentByName(ctx, "name_1")
+		assert.NoError(t, err)
+		assert.True(t, indexMatchesDefinition(*doc, def, model))
+	})
+
+	t.Run("filtro diferente recria o índice", func(t *testing.T) {
+		assert.NoError(t, st.EnsureIndexes(NewIndex("name").Unique().Partial(map[string]any{"age": map[string]any{"$gt": 50}})))
+
+		_, err := collection.InsertOne(ctx, TestEntity{ID: "5", Name: "same", Active: true, Age: 41})
+		assert.NoError(t, err)
+	})
+}
+
 func TestEnsureIndex_NilDefinition(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
