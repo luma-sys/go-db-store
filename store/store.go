@@ -62,6 +62,8 @@ type FindOptions struct {
 	Limit   int64 // the 0 value of limit means the will return all items
 	OrderBy string
 	SortBy  string
+	// Fields projeta a leitura: "campo" inclui, "-campo" exclui. Vazio devolve tudo.
+	Fields []string
 }
 
 func (o *FindOptions) Initialize() {
@@ -89,6 +91,8 @@ type Store[T any] interface {
 	FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error)
 	FindById(ctx context.Context, id any) (*T, error)
 	FindOne(ctx context.Context, f map[string]any) (*T, error)
+	// FindOneWith é o FindOne com projeção e ordenação de FindOptions; paginação é ignorada.
+	FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error)
 
 	Save(ctx context.Context, e *T) (*T, error)
 	SaveMany(ctx context.Context, e []T) (*InsertManyResult, error)

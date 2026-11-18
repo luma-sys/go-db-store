@@ -36,6 +36,7 @@ The following methods are available for both SQL and MongoDB stores:
 | **Count**             | Returns the number of entities by filtered query                       |
 | **FindById**          | Returns an entity by id                                                |
 | **FindOne**           | Returns one entity by match filter                                     |
+| **FindOneWith**       | FindOne with the projection and sort of `FindOptions`                  |
 | **FindAll**           | Returns a paginated list of entities                                   |
 | **Save**              | Creates a new entity                                                   |
 | **SaveMany**          | Creates multiple entities                                              |
@@ -91,6 +92,15 @@ func SomeService(ctx context.Context, db *sql.DB) {
     contact, err := store.FindById(ctx, 1)
     ...
 }
+```
+
+## Projection
+
+`FindOptions.Fields` limits what `FindAll` and `FindOneWith` read: `"name"` includes a field, `"-html"` excludes it. Mongo rejects mixing both, except for `_id`. SQL supports inclusion only and returns an error for `-field` or a column name that is not a plain identifier.
+
+```go
+st.FindAll(ctx, filter, store.FindOptions{Fields: []string{"-secretHash"}})
+st.FindOneWith(ctx, filter, store.FindOptions{Fields: []string{"code", "name"}})
 ```
 
 ## Index Management

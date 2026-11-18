@@ -918,6 +918,46 @@ func TestMongoFindAll(t *testing.T) {
 
 // ==================== TESTES COUNT ====================
 
+func TestMongoProjection(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.Save(ctx, &TestEntity{ID: "1", Name: "João", Age: 30, Tags: []string{"a"}})
+
+	t.Run("FindAll devolve só os campos incluídos", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"name"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, []TestEntity{{ID: "1", Name: "João"}}, results)
+	})
+
+	t.Run("FindAll omite os campos prefixados com -", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"-tags", "-age"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "João", results[0].Name)
+		assert.Zero(t, results[0].Age)
+		assert.Nil(t, results[0].Tags)
+		assert.NotZero(t, results[0].CreatedAt)
+	})
+
+	t.Run("FindOneWith aplica a projeção", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"_id": "1"}, FindOptions{Fields: []string{"-name"}})
+
+		assert.NoError(t, err)
+		assert.Empty(t, result.Name)
+		assert.Equal(t, 30, result.Age)
+	})
+
+	t.Run("FindOneWith sem resultado devolve ErrNotFound", func(t *testing.T) {
+		_, err := store.FindOneWith(ctx, map[string]any{"_id": "x"}, FindOptions{})
+
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+}
+
 func TestMongoCount(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()

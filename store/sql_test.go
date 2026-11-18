@@ -896,6 +896,44 @@ func TestSQLFindAll(t *testing.T) {
 	}
 }
 
+func TestSQLProjection(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+	store.Save(ctx, &TestSQLEntity{Name: "João", Age: 30})
+
+	t.Run("FindAll seleciona só as colunas incluídas", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"id", "name"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, []TestSQLEntity{{ID: 1, Name: "João"}}, results)
+	})
+
+	t.Run("FindOneWith seleciona só as colunas incluídas", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"id": 1}, FindOptions{Fields: []string{"age"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, &TestSQLEntity{Age: 30}, result)
+	})
+
+	t.Run("exclusão devolve erro de não suportado", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"-age"}})
+
+		assert.Error(t, err)
+	})
+
+	t.Run("nome de coluna inválido devolve erro", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"name; DROP TABLE test_entities"}})
+
+		assert.Error(t, err)
+	})
+}
+
 func TestSQLFindAll_IsNullOperators(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {

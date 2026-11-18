@@ -275,6 +275,10 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 		findOpts.SetLimit(opts.Limit)
 	}
 
+	if len(opts.Fields) > 0 {
+		findOpts.SetProjection(mongoProjection(opts.Fields))
+	}
+
 	// Configurando a ordenação
 	if opts.SortBy != "" {
 		sortValue := 1
@@ -333,9 +337,18 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 }
 
 func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
+	return s.FindOneWith(ctx, f, FindOptions{})
+}
+
+func (s *mongoStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error) {
 	var result T
 
-	err := s.coll.FindOne(ctx, f).Decode(&result)
+	findOpts := options.FindOne()
+	if len(opts.Fields) > 0 {
+		findOpts.SetProjection(mongoProjection(opts.Fields))
+	}
+
+	err := s.coll.FindOne(ctx, f, findOpts).Decode(&result)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, fmt.Errorf("%w com filtro %v", ErrNotFound, f)
 	}
@@ -680,6 +693,18 @@ func (s *mongoStore[T]) Has(ctx context.Context, id any) bool {
 	}
 
 	return res.RemainingBatchLength() == 1
+}
+
+func mongoProjection(fields []string) bson.D {
+	projection := make(bson.D, len(fields))
+	for i, f := range fields {
+		if key, ok := strings.CutPrefix(f, "-"); ok {
+			projection[i] = bson.E{Key: key, Value: 0}
+		} else {
+			projection[i] = bson.E{Key: f, Value: 1}
+		}
+	}
+	return projection
 }
 
 // MapToBsonD converte um mapa genérico para bson.D

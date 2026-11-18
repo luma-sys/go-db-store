@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -119,8 +120,17 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 }
 
 func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
+	return s.FindOneWith(ctx, f, FindOptions{})
+}
+
+func (s *SQLStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error) {
+	columns, err := sqlColumns(opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
-	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
+	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
 	query += whereClause
 
 	// Oracle não suporta LIMIT, usa FETCH FIRST
@@ -157,8 +167,13 @@ func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error)
 func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
 	opts.Initialize()
 
+	columns, err := sqlColumns(opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
-	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
+	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
 	query += whereClause
 
 	if opts.Limit > 0 {
@@ -1308,6 +1323,24 @@ func (s *SQLStore[T]) convertToType(value reflect.Value, targetType reflect.Type
 		return reflect.Value{}, fmt.Errorf("não converte %s para %s", value.Type(), targetType)
 	}
 	return reflect.ValueOf(value.Convert(targetType).Interface()), nil
+}
+
+var sqlIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// sqlColumns valida os nomes porque eles entram no texto da query, não como parâmetro.
+func sqlColumns(fields []string) (string, error) {
+	if len(fields) == 0 {
+		return "*", nil
+	}
+	for _, f := range fields {
+		if strings.HasPrefix(f, "-") {
+			return "", fmt.Errorf("projeção por exclusão não suportada no SQL: %s", f)
+		}
+		if !sqlIdentifier.MatchString(f) {
+			return "", fmt.Errorf("nome de coluna inválido: %q", f)
+		}
+	}
+	return strings.Join(fields, ", "), nil
 }
 
 // parseRow Função auxiliar de parse de linha do banco
