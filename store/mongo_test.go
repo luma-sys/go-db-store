@@ -154,6 +154,102 @@ func setupMongoTest(t *testing.T) (*mongo.Collection, func()) {
 	return collection, cleanup
 }
 
+type TestEntityWithPointerTimestamps struct {
+	ID        string     `bson:"_id"`
+	Name      string     `bson:"name"`
+	CreatedAt *time.Time `bson:"createdAt"`
+	UpdatedAt *time.Time `bson:"updatedAt"`
+}
+
+type TestEntityWithStringTimestamp struct {
+	ID        string `bson:"_id"`
+	UpdatedAt string `bson:"updatedAt"`
+}
+
+func TestMongoTimestamps(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntityWithPointerTimestamps](collection)
+	ctx := context.Background()
+
+	t.Run("Save carimba *time.Time", func(t *testing.T) {
+		result, err := store.Save(ctx, &TestEntityWithPointerTimestamps{ID: "p1"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.CreatedAt)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("SaveMany e SaveManyNotOrdered carimbam *time.Time", func(t *testing.T) {
+		_, err := store.SaveMany(ctx, []TestEntityWithPointerTimestamps{{ID: "p2"}})
+		assert.NoError(t, err)
+		_, err = store.SaveManyNotOrdered(ctx, []TestEntityWithPointerTimestamps{{ID: "p3"}})
+		assert.NoError(t, err)
+
+		for _, id := range []string{"p2", "p3"} {
+			found, err := store.FindById(ctx, id)
+			assert.NoError(t, err)
+			assert.NotNil(t, found.CreatedAt)
+			assert.NotNil(t, found.UpdatedAt)
+		}
+	})
+
+	t.Run("Update carimba *time.Time", func(t *testing.T) {
+		result, err := store.Update(ctx, &TestEntityWithPointerTimestamps{ID: "p1", Name: "novo"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("Upsert e UpsertMany carimbam *time.Time", func(t *testing.T) {
+		_, err := store.Upsert(ctx, &TestEntityWithPointerTimestamps{ID: "p4"}, nil)
+		assert.NoError(t, err)
+		_, err = store.UpsertMany(ctx, []TestEntityWithPointerTimestamps{{ID: "p5"}}, nil)
+		assert.NoError(t, err)
+
+		for _, id := range []string{"p4", "p5"} {
+			found, err := store.FindById(ctx, id)
+			assert.NoError(t, err)
+			assert.NotNil(t, found.CreatedAt)
+			assert.NotNil(t, found.UpdatedAt)
+		}
+	})
+
+	t.Run("tipo não suportado devolve erro em vez de pânico", func(t *testing.T) {
+		bad := NewMongoStore[TestEntityWithStringTimestamp](collection)
+		e := TestEntityWithStringTimestamp{ID: "s1"}
+
+		_, err := bad.Save(ctx, &e)
+		assert.Error(t, err)
+		_, err = bad.SaveMany(ctx, []TestEntityWithStringTimestamp{e})
+		assert.Error(t, err)
+		_, err = bad.SaveManyNotOrdered(ctx, []TestEntityWithStringTimestamp{e})
+		assert.Error(t, err)
+		_, err = bad.Update(ctx, &e)
+		assert.Error(t, err)
+		_, err = bad.Upsert(ctx, &e, nil)
+		assert.Error(t, err)
+		_, err = bad.UpsertMany(ctx, []TestEntityWithStringTimestamp{e}, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("entidade nil devolve erro em vez de pânico", func(t *testing.T) {
+		_, err := store.Save(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Update(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Upsert(ctx, nil, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("Update sem campo ID devolve erro", func(t *testing.T) {
+		noID := NewMongoStore[struct{ Name string }](collection)
+		_, err := noID.Update(ctx, &struct{ Name string }{Name: "x"})
+		assert.Error(t, err)
+	})
+}
+
 // ==================== TESTES SAVE ====================
 
 func TestMongoSave(t *testing.T) {

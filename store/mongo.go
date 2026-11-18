@@ -348,18 +348,15 @@ func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, erro
 
 // Save salva um documento
 func (s *mongoStore[T]) Save(ctx context.Context, e *T) (*T, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-
-	if created := value.FieldByName("CreatedAt"); created.IsValid() {
-		created.Set(reflect.ValueOf(now))
-	}
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		updated.Set(reflect.ValueOf(now))
-	}
-
-	_, err := s.coll.InsertOne(ctx, e)
+	value, err := entityValue(e)
 	if err != nil {
+		return nil, err
+	}
+	if err = stamp(value, time.Now(), false, "CreatedAt", "UpdatedAt"); err != nil {
+		return nil, err
+	}
+
+	if _, err = s.coll.InsertOne(ctx, e); err != nil {
 		return nil, fmt.Errorf("erro ao salvar documento: %w", err)
 	}
 
@@ -372,13 +369,12 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 
 	docs := make([]any, len(e))
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			created.Set(reflect.ValueOf(now))
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			updated.Set(reflect.ValueOf(now))
+		if err = stamp(value, now, false, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		docs[i] = doc
@@ -404,13 +400,12 @@ func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertM
 
 	docs := make([]any, len(e))
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			created.Set(reflect.ValueOf(now))
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			updated.Set(reflect.ValueOf(now))
+		if err = stamp(value, now, false, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		docs[i] = doc
@@ -426,20 +421,24 @@ func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertM
 
 // Update atualiza um documento
 func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-	id := value.FieldByName("ID").String()
-
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		updated.Set(reflect.ValueOf(now))
+	value, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
+	idField := value.FieldByName("ID")
+	if !idField.IsValid() {
+		return nil, fmt.Errorf("entidade sem campo ID")
+	}
+	if err = stamp(value, time.Now(), false, "UpdatedAt"); err != nil {
+		return nil, err
 	}
 
-	filter := bson.M{"_id": id}
+	filter := bson.M{"_id": idField.String()}
 	update := bson.M{"$set": e}
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var updated T
-	err := s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
+	err = s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, fmt.Errorf("%w para atualização", ErrNotFound)
 	}
@@ -524,19 +523,12 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdat
 }
 
 func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-
-	if created := value.FieldByName("CreatedAt"); created.IsValid() {
-		if created.IsZero() {
-			created.Set(reflect.ValueOf(now))
-		}
+	value, err := entityValue(e)
+	if err != nil {
+		return nil, err
 	}
-
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		if updated.IsZero() {
-			updated.Set(reflect.ValueOf(now))
-		}
+	if err = stamp(value, time.Now(), true, "CreatedAt", "UpdatedAt"); err != nil {
+		return nil, err
 	}
 
 	var id string
@@ -581,18 +573,12 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 	operations := make([]mongo.WriteModel, len(e))
 
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			if created.IsZero() {
-				created.Set(reflect.ValueOf(now))
-			}
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			if updated.IsZero() {
-				updated.Set(reflect.ValueOf(now))
-			}
+		if err = stamp(value, now, true, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		fieldValue := value.FieldByName("ID")
@@ -724,6 +710,12 @@ func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
 
 func getFieldValue(key string, value reflect.Value) (any, error) {
 	for k := range strings.SplitSeq(key, ".") {
+		for value.Kind() == reflect.Pointer && !value.IsNil() {
+			value = value.Elem()
+		}
+		if value.Kind() != reflect.Struct {
+			return nil, fmt.Errorf("invalid value")
+		}
 		value = value.FieldByName(k)
 		if !value.IsValid() {
 			return nil, fmt.Errorf("invalid value")

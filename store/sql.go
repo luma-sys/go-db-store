@@ -201,8 +201,10 @@ func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOp
 
 // Save insere um novo registro
 func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
-	// Implementação genérica requer reflexão
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 	fields := make([]string, 0)
 	placeholders := make([]string, 0)
 	values := make([]any, 0)
@@ -241,7 +243,7 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	if lastID, err := result.LastInsertId(); err == nil && lastID > 0 {
 		// Atualizar o campo ID usando reflexão
 		idField := v.FieldByName("ID")
-		if idField.IsValid() && idField.CanSet() {
+		if idField.CanInt() && idField.CanSet() {
 			idField.SetInt(lastID)
 		}
 	}
@@ -270,7 +272,11 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 	ids := make([]any, len(entities))
 
 	for i, entity := range entities {
-		v := reflect.ValueOf(&entity).Elem()
+		v, err := entityValue(&entity)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		fields := make([]string, 0)
 		placeholders := make([]string, 0)
 		values := make([]any, 0)
@@ -309,7 +315,7 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 		if lastID, err := result.LastInsertId(); err == nil {
 			ids[i] = lastID
 			idField := v.FieldByName("ID")
-			if idField.IsValid() && idField.CanSet() {
+			if idField.CanInt() && idField.CanSet() {
 				idField.SetInt(lastID)
 			}
 		}
@@ -329,7 +335,10 @@ func (s *SQLStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertMan
 
 // Update atualiza um registro existente
 func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verifica se existe campo updated_at
 	hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid()
@@ -356,13 +365,8 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 		updates = append(updates, fmt.Sprintf("%s = ?", "updated_at"))
 		values = append(values, time.Now())
 
-		// Atualiza o valor no struct também
-		for i := range v.NumField() {
-			field := v.Type().Field(i)
-			if field.Tag.Get("db") == "updated_at" {
-				v.Field(i).Set(reflect.ValueOf(time.Now()))
-				break
-			}
+		if err := stamp(v, time.Now(), false, "UpdatedAt"); err != nil {
+			return nil, err
 		}
 	}
 
@@ -502,7 +506,10 @@ func (s *SQLStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate)
 
 // Upsert cria ou atualiza um registro
 func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verifica se existe campo updated_at
 	hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid()
@@ -682,7 +689,11 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 	}()
 
 	for _, entity := range entities {
-		v := reflect.ValueOf(&entity).Elem()
+		v, err := entityValue(&entity)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 
 		// Verifica se é um novo registro
 		idField := v.FieldByName("ID")
@@ -862,7 +873,7 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 			return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", s.driver.GetValue())
 		}
 
-		_, err := tx.ExecContext(ctx, query, values...)
+		_, err = tx.ExecContext(ctx, query, values...)
 		if err != nil {
 			tx.Rollback()
 			return nil, err
@@ -1293,7 +1304,9 @@ func (s *SQLStore[T]) convertToType(value reflect.Value, targetType reflect.Type
 		}
 	}
 
-	// Se nenhuma conversão específica funcionar, tenta conversão genérica
+	if !value.CanConvert(targetType) {
+		return reflect.Value{}, fmt.Errorf("não converte %s para %s", value.Type(), targetType)
+	}
 	return reflect.ValueOf(value.Convert(targetType).Interface()), nil
 }
 

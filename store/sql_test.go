@@ -241,6 +241,64 @@ func TestSQLSave_WithoutAutoincrement(t *testing.T) {
 	assert.Equal(t, "ID Manual", found.Name)
 }
 
+type TestSQLEntityWithPointerTimestamps struct {
+	ID        string     `db:"id"`
+	Name      string     `db:"name"`
+	UpdatedAt *time.Time `db:"updated_at"`
+}
+
+type TestSQLEntityWithStringTimestamp struct {
+	ID        string `db:"id"`
+	Name      string `db:"name"`
+	UpdatedAt string `db:"updated_at"`
+}
+
+func TestSQLTimestamps(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`CREATE TABLE text_id_entities (id TEXT PRIMARY KEY, name TEXT, updated_at TIMESTAMP);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLStore[TestSQLEntityWithPointerTimestamps](db, enum.DatabaseDriverSqlite, "text_id_entities", "id", false)
+	ctx := context.Background()
+
+	t.Run("Save com ID string não tenta gravar o rowid no campo", func(t *testing.T) {
+		result, err := store.Save(ctx, &TestSQLEntityWithPointerTimestamps{ID: "a1", Name: "x"})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "a1", result.ID)
+	})
+
+	t.Run("Update carimba *time.Time", func(t *testing.T) {
+		result, err := store.Update(ctx, &TestSQLEntityWithPointerTimestamps{ID: "a1", Name: "y"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("tipo não suportado devolve erro em vez de pânico", func(t *testing.T) {
+		bad := NewSQLStore[TestSQLEntityWithStringTimestamp](db, enum.DatabaseDriverSqlite, "text_id_entities", "id", false)
+
+		_, err := bad.Update(ctx, &TestSQLEntityWithStringTimestamp{ID: "a1"})
+		assert.Error(t, err)
+	})
+
+	t.Run("entidade nil devolve erro em vez de pânico", func(t *testing.T) {
+		_, err := store.Save(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Update(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Upsert(ctx, nil, nil)
+		assert.Error(t, err)
+	})
+}
+
 func TestSQLSave_IgnoredFields(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
