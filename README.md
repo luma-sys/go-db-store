@@ -40,6 +40,7 @@ The following methods are available for both SQL and MongoDB stores:
 | **Save**              | Creates a new entity                                                   |
 | **SaveMany**          | Creates multiple entities                                              |
 | **Update**            | Update updates an existing entity                                      |
+| **UpdateFields**      | UpdateFields sets only the given fields of one entity by id            |
 | **UpdateMany**        | UpdateMany updates fields in multiple entities using filters           |
 | **Upsert**            | Upsert creates or updates an entity                                    |
 | **UpsertMany**        | Creates or updates multiple entities                                   |

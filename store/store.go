@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
+
+// ErrNotFound é embrulhado pelas buscas e updates por id quando o registro não existe; use errors.Is.
+var ErrNotFound = errors.New("documento não encontrado")
 
 type TransactionContext any
 
@@ -91,6 +95,8 @@ type Store[T any] interface {
 	SaveManyNotOrdered(ctx context.Context, e []T) (*InsertManyResult, error)
 
 	Update(ctx context.Context, e *T) (*T, error)
+	// UpdateFields grava só os campos informados, sem ler e regravar a entidade inteira.
+	UpdateFields(ctx context.Context, id any, fields map[string]any) (*T, error)
 	UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate) (*BulkWriteResult, error)
 
 	Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error)
