@@ -2617,6 +2617,32 @@ func TestEnsureIndex_Partial(t *testing.T) {
 	})
 }
 
+func TestIndexMatchesDefinition_ServerExpandedCollation(t *testing.T) {
+	def := NewIndex("name").Asc().Unique().Insensitive()
+	model, err := buildMongoIndexModel(def)
+	assert.NoError(t, err)
+	keys, err := bson.Marshal(bson.D{{Key: "name", Value: 1}})
+	assert.NoError(t, err)
+
+	unique := true
+	spec := mongoIndexDocument{
+		Name:   "name_1",
+		Keys:   keys,
+		Unique: &unique,
+		Collation: &options.Collation{
+			Locale: "en", Strength: 2, CaseFirst: "off", Alternate: "non-ignorable",
+			MaxVariable: "punct",
+		},
+	}
+	assert.True(t, indexMatchesDefinition(spec, def, model), "collation expandida pelo servidor não pode forçar drop")
+
+	spec.Collation.Strength = 3
+	assert.False(t, indexMatchesDefinition(spec, def, model))
+
+	spec.Collation = nil
+	assert.False(t, indexMatchesDefinition(spec, def, model))
+}
+
 func TestEnsureIndex_NilDefinition(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()

@@ -188,12 +188,15 @@ func indexMatchesDefinition(spec mongoIndexDocument, def *IndexDefinition, model
 		return false
 	}
 
-	expectedCollation := expectedIndexCollation(def)
-	if !reflect.DeepEqual(spec.Collation, expectedCollation) {
-		return false
-	}
+	return collationMatches(spec.Collation, expectedIndexCollation(def))
+}
 
-	return true
+// collationMatches compara só o que a lib declara: o servidor devolve a collation com todos os campos preenchidos.
+func collationMatches(got, want *options.Collation) bool {
+	if got == nil || want == nil {
+		return got == want
+	}
+	return got.Locale == want.Locale && got.Strength == want.Strength
 }
 
 // sortedDoc ordena as chaves: map não tem ordem, e o filtro gravado no índice é comparado byte a byte.
