@@ -36,6 +36,7 @@ The following methods are available for both SQL and MongoDB stores:
 | **Count**             | Returns the number of entities by filtered query                       |
 | **FindById**          | Returns an entity by id                                                |
 | **FindOne**           | Returns one entity by match filter                                     |
+| **FindOneWith**       | FindOne with the `Fields` and `Sort` of `FindOptions`                  |
 | **FindAll**           | Returns a paginated list of entities                                   |
 | **Save**              | Creates a new entity                                                   |
 | **SaveMany**          | Creates multiple entities                                              |
@@ -91,6 +92,26 @@ func SomeService(ctx context.Context, db *sql.DB) {
     contact, err := store.FindById(ctx, 1)
     ...
 }
+```
+
+## Projection
+
+`FindOptions.Fields` limits what `FindAll` and `FindOneWith` read: `"name"` includes a field, `"-html"` excludes it. Mongo rejects mixing both, except for `_id`. SQL supports inclusion only and returns an error for `-field` or a column name that is not a plain identifier.
+
+```go
+st.FindAll(ctx, filter, store.FindOptions{Fields: []string{"-secretHash"}})
+st.FindOneWith(ctx, filter, store.FindOptions{Fields: []string{"code", "name"}})
+```
+
+## Sorting
+
+`FindOptions.Sort` orders by several fields, in the given order, in `FindAll` and `FindOneWith`. When set, `SortBy` and `OrderBy` are ignored; without it they keep working as before (Mongo only — SQL never applied `SortBy`). `"id"` maps to `_id` on Mongo.
+
+```go
+st.FindAll(ctx, filter, store.FindOptions{Sort: []store.SortField{
+    {Key: "status"},
+    {Key: "responsible.name", Desc: true},
+}})
 ```
 
 ## Index Management
@@ -153,6 +174,16 @@ if err := st.EnsureManyIndexes(
 ); err != nil {
     panic(err)
 }
+```
+
+### Partial indexes
+
+`Partial` indexes only the documents that match the filter (`partialFilterExpression`). The generated name stays the driver default (`keys_direction`), so an index already built by the driver is kept.
+
+```go
+st.EnsureIndexes(store.NewIndex("code").Unique().Partial(map[string]any{
+    "deletedAt": map[string]any{"$exists": false},
+}))
 ```
 
 > **Note:** SQL implementation is not yet available. `EnsureIndex*` methods on SQL stores return `errors.New("method not implemented")`.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type mongoIndexDocument struct {
 	Unique    *bool              `bson:"unique"`
 	Sparse    *bool              `bson:"sparse"`
 	Collation *options.Collation `bson:"collation"`
+	Partial   bson.Raw           `bson:"partialFilterExpression"`
 }
 
 // NewMongoStore cria um novo mongoStore
@@ -113,28 +115,27 @@ func buildMongoIndexModel(def *IndexDefinition) (mongo.IndexModel, error) {
 		keys[i] = bson.E{Key: f.Key, Value: int(f.Dir)}
 	}
 
-	model := mongo.IndexModel{Keys: keys}
-	if def.unique || def.sparse || def.name != "" {
-		opts := options.Index()
-		if def.unique {
-			opts.SetUnique(true)
-		}
-		if def.insensitive {
-			opts.SetCollation(&options.Collation{
-				Locale:   "en",
-				Strength: 2,
-			})
-		}
-		if def.sparse {
-			opts.SetSparse(true)
-		}
-		if def.name != "" {
-			opts.SetName(def.name)
-		}
-		model.Options = opts
+	opts := options.Index()
+	if def.unique {
+		opts.SetUnique(true)
+	}
+	if def.insensitive {
+		opts.SetCollation(&options.Collation{
+			Locale:   "en",
+			Strength: 2,
+		})
+	}
+	if def.sparse {
+		opts.SetSparse(true)
+	}
+	if def.name != "" {
+		opts.SetName(def.name)
+	}
+	if def.partial != nil {
+		opts.SetPartialFilterExpression(sortedDoc(def.partial))
 	}
 
-	return model, nil
+	return mongo.IndexModel{Keys: keys, Options: opts}, nil
 }
 
 func getMongoIndexName(def *IndexDefinition) string {
@@ -177,12 +178,43 @@ func indexMatchesDefinition(spec mongoIndexDocument, def *IndexDefinition, model
 		return false
 	}
 
+	var expectedPartial bson.Raw
+	if def.partial != nil {
+		if expectedPartial, err = bson.Marshal(sortedDoc(def.partial)); err != nil {
+			return false
+		}
+	}
+	if !bytes.Equal(spec.Partial, expectedPartial) {
+		return false
+	}
+
 	expectedCollation := expectedIndexCollation(def)
 	if !reflect.DeepEqual(spec.Collation, expectedCollation) {
 		return false
 	}
 
 	return true
+}
+
+// sortedDoc ordena as chaves: map não tem ordem, e o filtro gravado no índice é comparado byte a byte.
+func sortedDoc(v any) any {
+	switch d := v.(type) {
+	case map[string]any:
+		out := make(bson.D, 0, len(d))
+		for _, k := range slices.Sorted(maps.Keys(d)) {
+			out = append(out, bson.E{Key: k, Value: sortedDoc(d[k])})
+		}
+		return out
+	case bson.M:
+		return sortedDoc(map[string]any(d))
+	case []any:
+		out := make([]any, len(d))
+		for i, e := range d {
+			out[i] = sortedDoc(e)
+		}
+		return out
+	}
+	return v
 }
 
 func expectedIndexCollation(def *IndexDefinition) *options.Collation {
@@ -275,8 +307,14 @@ func (s *mongoStore[T]) FindAll(ctx context.Context, f map[string]any, opts Find
 		findOpts.SetLimit(opts.Limit)
 	}
 
+	if len(opts.Fields) > 0 {
+		findOpts.SetProjection(mongoProjection(opts.Fields))
+	}
+
 	// Configurando a ordenação
-	if opts.SortBy != "" {
+	if len(opts.Sort) > 0 {
+		findOpts.SetSort(mongoSort(opts.Sort))
+	} else if opts.SortBy != "" {
 		sortValue := 1
 		if opts.OrderBy == "DESC" {
 			sortValue = -1
@@ -333,9 +371,21 @@ func (s *mongoStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 }
 
 func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
+	return s.FindOneWith(ctx, f, FindOptions{})
+}
+
+func (s *mongoStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error) {
 	var result T
 
-	err := s.coll.FindOne(ctx, f).Decode(&result)
+	findOpts := options.FindOne()
+	if len(opts.Fields) > 0 {
+		findOpts.SetProjection(mongoProjection(opts.Fields))
+	}
+	if len(opts.Sort) > 0 {
+		findOpts.SetSort(mongoSort(opts.Sort))
+	}
+
+	err := s.coll.FindOne(ctx, f, findOpts).Decode(&result)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, fmt.Errorf("%w com filtro %v", ErrNotFound, f)
 	}
@@ -348,18 +398,15 @@ func (s *mongoStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, erro
 
 // Save salva um documento
 func (s *mongoStore[T]) Save(ctx context.Context, e *T) (*T, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-
-	if created := value.FieldByName("CreatedAt"); created.IsValid() {
-		created.Set(reflect.ValueOf(now))
-	}
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		updated.Set(reflect.ValueOf(now))
-	}
-
-	_, err := s.coll.InsertOne(ctx, e)
+	value, err := entityValue(e)
 	if err != nil {
+		return nil, err
+	}
+	if err = stamp(value, time.Now(), false, "CreatedAt", "UpdatedAt"); err != nil {
+		return nil, err
+	}
+
+	if _, err = s.coll.InsertOne(ctx, e); err != nil {
 		return nil, fmt.Errorf("erro ao salvar documento: %w", err)
 	}
 
@@ -372,13 +419,12 @@ func (s *mongoStore[T]) SaveMany(ctx context.Context, e []T) (*InsertManyResult,
 
 	docs := make([]any, len(e))
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			created.Set(reflect.ValueOf(now))
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			updated.Set(reflect.ValueOf(now))
+		if err = stamp(value, now, false, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		docs[i] = doc
@@ -404,13 +450,12 @@ func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertM
 
 	docs := make([]any, len(e))
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			created.Set(reflect.ValueOf(now))
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			updated.Set(reflect.ValueOf(now))
+		if err = stamp(value, now, false, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		docs[i] = doc
@@ -426,20 +471,24 @@ func (s *mongoStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertM
 
 // Update atualiza um documento
 func (s *mongoStore[T]) Update(ctx context.Context, e *T) (*T, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-	id := value.FieldByName("ID").String()
-
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		updated.Set(reflect.ValueOf(now))
+	value, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
+	idField := value.FieldByName("ID")
+	if !idField.IsValid() {
+		return nil, fmt.Errorf("entidade sem campo ID")
+	}
+	if err = stamp(value, time.Now(), false, "UpdatedAt"); err != nil {
+		return nil, err
 	}
 
-	filter := bson.M{"_id": id}
+	filter := bson.M{"_id": idField.String()}
 	update := bson.M{"$set": e}
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var updated T
-	err := s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
+	err = s.coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updated)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return nil, fmt.Errorf("%w para atualização", ErrNotFound)
 	}
@@ -496,15 +545,10 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdat
 		// Adiciona todos os campos do map
 		maps.Copy(setFields, fb.Fields)
 
-		pipeline := mongo.Pipeline{
-			{
-				{Key: "$set", Value: setFields},
-			},
-		}
-
+		// $set de documento, não de pipeline: num pipeline, string iniciada por $ vira caminho de campo.
 		operations[i] = mongo.NewUpdateManyModel().
 			SetFilter(filter).
-			SetUpdate(pipeline).
+			SetUpdate(bson.M{"$set": setFields}).
 			SetUpsert(false)
 	}
 
@@ -524,19 +568,12 @@ func (s *mongoStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdat
 }
 
 func (s *mongoStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
-	now := time.Now()
-	value := reflect.ValueOf(e).Elem()
-
-	if created := value.FieldByName("CreatedAt"); created.IsValid() {
-		if created.IsZero() {
-			created.Set(reflect.ValueOf(now))
-		}
+	value, err := entityValue(e)
+	if err != nil {
+		return nil, err
 	}
-
-	if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-		if updated.IsZero() {
-			updated.Set(reflect.ValueOf(now))
-		}
+	if err = stamp(value, time.Now(), true, "CreatedAt", "UpdatedAt"); err != nil {
+		return nil, err
 	}
 
 	var id string
@@ -581,18 +618,12 @@ func (s *mongoStore[T]) UpsertMany(ctx context.Context, e []T, f []StoreUpsertFi
 	operations := make([]mongo.WriteModel, len(e))
 
 	for i, doc := range e {
-		value := reflect.ValueOf(&doc).Elem()
-
-		if created := value.FieldByName("CreatedAt"); created.IsValid() {
-			if created.IsZero() {
-				created.Set(reflect.ValueOf(now))
-			}
+		value, err := entityValue(&doc)
+		if err != nil {
+			return nil, err
 		}
-
-		if updated := value.FieldByName("UpdatedAt"); updated.IsValid() {
-			if updated.IsZero() {
-				updated.Set(reflect.ValueOf(now))
-			}
+		if err = stamp(value, now, true, "CreatedAt", "UpdatedAt"); err != nil {
+			return nil, err
 		}
 
 		fieldValue := value.FieldByName("ID")
@@ -696,6 +727,33 @@ func (s *mongoStore[T]) Has(ctx context.Context, id any) bool {
 	return res.RemainingBatchLength() == 1
 }
 
+func mongoProjection(fields []string) bson.D {
+	projection := make(bson.D, len(fields))
+	for i, f := range fields {
+		if key, ok := strings.CutPrefix(f, "-"); ok {
+			projection[i] = bson.E{Key: key, Value: 0}
+		} else {
+			projection[i] = bson.E{Key: f, Value: 1}
+		}
+	}
+	return projection
+}
+
+func mongoSort(fields []SortField) bson.D {
+	sort := make(bson.D, len(fields))
+	for i, f := range fields {
+		key, dir := f.Key, 1
+		if key == "id" {
+			key = "_id"
+		}
+		if f.Desc {
+			dir = -1
+		}
+		sort[i] = bson.E{Key: key, Value: dir}
+	}
+	return sort
+}
+
 // MapToBsonD converte um mapa genérico para bson.D
 func (s *mongoStore[T]) mapToBsonD(m map[string]any) bson.D {
 	bsonD := bson.D{}
@@ -724,6 +782,12 @@ func (s *mongoStore[T]) normalizeDocForUpsert(doc any) bson.M {
 
 func getFieldValue(key string, value reflect.Value) (any, error) {
 	for k := range strings.SplitSeq(key, ".") {
+		for value.Kind() == reflect.Pointer && !value.IsNil() {
+			value = value.Elem()
+		}
+		if value.Kind() != reflect.Struct {
+			return nil, fmt.Errorf("invalid value")
+		}
 		value = value.FieldByName(k)
 		if !value.IsValid() {
 			return nil, fmt.Errorf("invalid value")

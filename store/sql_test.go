@@ -241,6 +241,64 @@ func TestSQLSave_WithoutAutoincrement(t *testing.T) {
 	assert.Equal(t, "ID Manual", found.Name)
 }
 
+type TestSQLEntityWithPointerTimestamps struct {
+	ID        string     `db:"id"`
+	Name      string     `db:"name"`
+	UpdatedAt *time.Time `db:"updated_at"`
+}
+
+type TestSQLEntityWithStringTimestamp struct {
+	ID        string `db:"id"`
+	Name      string `db:"name"`
+	UpdatedAt string `db:"updated_at"`
+}
+
+func TestSQLTimestamps(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`CREATE TABLE text_id_entities (id TEXT PRIMARY KEY, name TEXT, updated_at TIMESTAMP);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSQLStore[TestSQLEntityWithPointerTimestamps](db, enum.DatabaseDriverSqlite, "text_id_entities", "id", false)
+	ctx := context.Background()
+
+	t.Run("Save com ID string não tenta gravar o rowid no campo", func(t *testing.T) {
+		result, err := store.Save(ctx, &TestSQLEntityWithPointerTimestamps{ID: "a1", Name: "x"})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "a1", result.ID)
+	})
+
+	t.Run("Update carimba *time.Time", func(t *testing.T) {
+		result, err := store.Update(ctx, &TestSQLEntityWithPointerTimestamps{ID: "a1", Name: "y"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("tipo não suportado devolve erro em vez de pânico", func(t *testing.T) {
+		bad := NewSQLStore[TestSQLEntityWithStringTimestamp](db, enum.DatabaseDriverSqlite, "text_id_entities", "id", false)
+
+		_, err := bad.Update(ctx, &TestSQLEntityWithStringTimestamp{ID: "a1"})
+		assert.Error(t, err)
+	})
+
+	t.Run("entidade nil devolve erro em vez de pânico", func(t *testing.T) {
+		_, err := store.Save(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Update(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Upsert(ctx, nil, nil)
+		assert.Error(t, err)
+	})
+}
+
 func TestSQLSave_IgnoredFields(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
@@ -836,6 +894,77 @@ func TestSQLFindAll(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSQLProjection(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+	store.Save(ctx, &TestSQLEntity{Name: "João", Age: 30})
+
+	t.Run("FindAll seleciona só as colunas incluídas", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"id", "name"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, []TestSQLEntity{{ID: 1, Name: "João"}}, results)
+	})
+
+	t.Run("FindOneWith seleciona só as colunas incluídas", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"id": 1}, FindOptions{Fields: []string{"age"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, &TestSQLEntity{Age: 30}, result)
+	})
+
+	t.Run("exclusão devolve erro de não suportado", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"-age"}})
+
+		assert.Error(t, err)
+	})
+
+	t.Run("nome de coluna inválido devolve erro", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"name; DROP TABLE test_entities"}})
+
+		assert.Error(t, err)
+	})
+}
+
+func TestSQLSortByManyFields(t *testing.T) {
+	db, err := setupSQLDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := NewSQLStore[TestSQLEntity](db, enum.DatabaseDriverSqlite, "test_entities", "id", true)
+	ctx := context.Background()
+	store.SaveMany(ctx, []TestSQLEntity{{Name: "Ana", Age: 30}, {Name: "Bia", Age: 20}, {Name: "Caio", Age: 30}})
+
+	t.Run("FindAll ordena pela lista de campos antes de paginar", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Limit: 2, Sort: []SortField{{Key: "age", Desc: true}, {Key: "name", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Caio", results[0].Name)
+		assert.Equal(t, "Ana", results[1].Name)
+	})
+
+	t.Run("FindOneWith aplica a ordenação", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, nil, FindOptions{Sort: []SortField{{Key: "age"}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "Bia", result.Name)
+	})
+
+	t.Run("nome de coluna inválido devolve erro", func(t *testing.T) {
+		_, err := store.FindAll(ctx, nil, FindOptions{Sort: []SortField{{Key: "age; DROP TABLE x"}}})
+
+		assert.Error(t, err)
+	})
 }
 
 func TestSQLFindAll_IsNullOperators(t *testing.T) {

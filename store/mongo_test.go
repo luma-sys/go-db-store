@@ -154,6 +154,102 @@ func setupMongoTest(t *testing.T) (*mongo.Collection, func()) {
 	return collection, cleanup
 }
 
+type TestEntityWithPointerTimestamps struct {
+	ID        string     `bson:"_id"`
+	Name      string     `bson:"name"`
+	CreatedAt *time.Time `bson:"createdAt"`
+	UpdatedAt *time.Time `bson:"updatedAt"`
+}
+
+type TestEntityWithStringTimestamp struct {
+	ID        string `bson:"_id"`
+	UpdatedAt string `bson:"updatedAt"`
+}
+
+func TestMongoTimestamps(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntityWithPointerTimestamps](collection)
+	ctx := context.Background()
+
+	t.Run("Save carimba *time.Time", func(t *testing.T) {
+		result, err := store.Save(ctx, &TestEntityWithPointerTimestamps{ID: "p1"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.CreatedAt)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("SaveMany e SaveManyNotOrdered carimbam *time.Time", func(t *testing.T) {
+		_, err := store.SaveMany(ctx, []TestEntityWithPointerTimestamps{{ID: "p2"}})
+		assert.NoError(t, err)
+		_, err = store.SaveManyNotOrdered(ctx, []TestEntityWithPointerTimestamps{{ID: "p3"}})
+		assert.NoError(t, err)
+
+		for _, id := range []string{"p2", "p3"} {
+			found, err := store.FindById(ctx, id)
+			assert.NoError(t, err)
+			assert.NotNil(t, found.CreatedAt)
+			assert.NotNil(t, found.UpdatedAt)
+		}
+	})
+
+	t.Run("Update carimba *time.Time", func(t *testing.T) {
+		result, err := store.Update(ctx, &TestEntityWithPointerTimestamps{ID: "p1", Name: "novo"})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, result.UpdatedAt)
+	})
+
+	t.Run("Upsert e UpsertMany carimbam *time.Time", func(t *testing.T) {
+		_, err := store.Upsert(ctx, &TestEntityWithPointerTimestamps{ID: "p4"}, nil)
+		assert.NoError(t, err)
+		_, err = store.UpsertMany(ctx, []TestEntityWithPointerTimestamps{{ID: "p5"}}, nil)
+		assert.NoError(t, err)
+
+		for _, id := range []string{"p4", "p5"} {
+			found, err := store.FindById(ctx, id)
+			assert.NoError(t, err)
+			assert.NotNil(t, found.CreatedAt)
+			assert.NotNil(t, found.UpdatedAt)
+		}
+	})
+
+	t.Run("tipo não suportado devolve erro em vez de pânico", func(t *testing.T) {
+		bad := NewMongoStore[TestEntityWithStringTimestamp](collection)
+		e := TestEntityWithStringTimestamp{ID: "s1"}
+
+		_, err := bad.Save(ctx, &e)
+		assert.Error(t, err)
+		_, err = bad.SaveMany(ctx, []TestEntityWithStringTimestamp{e})
+		assert.Error(t, err)
+		_, err = bad.SaveManyNotOrdered(ctx, []TestEntityWithStringTimestamp{e})
+		assert.Error(t, err)
+		_, err = bad.Update(ctx, &e)
+		assert.Error(t, err)
+		_, err = bad.Upsert(ctx, &e, nil)
+		assert.Error(t, err)
+		_, err = bad.UpsertMany(ctx, []TestEntityWithStringTimestamp{e}, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("entidade nil devolve erro em vez de pânico", func(t *testing.T) {
+		_, err := store.Save(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Update(ctx, nil)
+		assert.Error(t, err)
+		_, err = store.Upsert(ctx, nil, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("Update sem campo ID devolve erro", func(t *testing.T) {
+		noID := NewMongoStore[struct{ Name string }](collection)
+		_, err := noID.Update(ctx, &struct{ Name string }{Name: "x"})
+		assert.Error(t, err)
+	})
+}
+
 // ==================== TESTES SAVE ====================
 
 func TestMongoSave(t *testing.T) {
@@ -822,6 +918,84 @@ func TestMongoFindAll(t *testing.T) {
 
 // ==================== TESTES COUNT ====================
 
+func TestMongoProjection(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.Save(ctx, &TestEntity{ID: "1", Name: "João", Age: 30, Tags: []string{"a"}})
+
+	t.Run("FindAll devolve só os campos incluídos", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"name"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, []TestEntity{{ID: "1", Name: "João"}}, results)
+	})
+
+	t.Run("FindAll omite os campos prefixados com -", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Fields: []string{"-tags", "-age"}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "João", results[0].Name)
+		assert.Zero(t, results[0].Age)
+		assert.Nil(t, results[0].Tags)
+		assert.NotZero(t, results[0].CreatedAt)
+	})
+
+	t.Run("FindOneWith aplica a projeção", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"_id": "1"}, FindOptions{Fields: []string{"-name"}})
+
+		assert.NoError(t, err)
+		assert.Empty(t, result.Name)
+		assert.Equal(t, 30, result.Age)
+	})
+
+	t.Run("FindOneWith sem resultado devolve ErrNotFound", func(t *testing.T) {
+		_, err := store.FindOneWith(ctx, map[string]any{"_id": "x"}, FindOptions{})
+
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+}
+
+func TestMongoSortByManyFields(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.SaveMany(ctx, []TestEntity{
+		{ID: "1", Name: "Ana", Age: 30},
+		{ID: "2", Name: "Bia", Age: 20},
+		{ID: "3", Name: "Caio", Age: 30},
+	})
+
+	t.Run("FindAll ordena pela lista de campos na ordem dada", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{Sort: []SortField{{Key: "age", Desc: true}, {Key: "name"}}})
+
+		assert.NoError(t, err)
+		ids := []string{}
+		for _, r := range results {
+			ids = append(ids, r.ID)
+		}
+		assert.Equal(t, []string{"1", "3", "2"}, ids)
+	})
+
+	t.Run("Sort prevalece sobre SortBy e aceita id", func(t *testing.T) {
+		results, err := store.FindAll(ctx, nil, FindOptions{SortBy: "name", Sort: []SortField{{Key: "id", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "3", results[0].ID)
+	})
+
+	t.Run("FindOneWith aplica a ordenação", func(t *testing.T) {
+		result, err := store.FindOneWith(ctx, map[string]any{"age": 30}, FindOptions{Sort: []SortField{{Key: "name", Desc: true}}})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "3", result.ID)
+	})
+}
+
 func TestMongoCount(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
 	defer cleanup()
@@ -1377,6 +1551,26 @@ func TestMongoUpdateMany(t *testing.T) {
 }
 
 // ==================== TESTES UPSERT ====================
+
+func TestMongoUpdateMany_DollarValueIsLiteral(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	store := NewMongoStore[TestEntity](collection)
+	ctx := context.Background()
+	store.Save(ctx, &TestEntity{ID: "1", Name: "João", Tags: []string{"a"}})
+
+	_, err := store.UpdateMany(ctx, []EntityFieldsToUpdate{{
+		Filter: map[string]any{"_id": "1"},
+		Fields: map[string]any{"name": "$_id", "tags": []string{"$name"}},
+	}})
+	assert.NoError(t, err)
+
+	found, err := store.FindById(ctx, "1")
+	assert.NoError(t, err)
+	assert.Equal(t, "$_id", found.Name)
+	assert.Equal(t, []string{"$name"}, found.Tags)
+}
 
 func TestMongoUpsert(t *testing.T) {
 	collection, cleanup := setupMongoTest(t)
@@ -2378,6 +2572,49 @@ func TestEnsureIndex_UniqueCompound(t *testing.T) {
 	assert.Error(t, err)
 	_, err = collection.InsertOne(context.Background(), TestEntity{ID: "3", Name: "same-name", Age: 11})
 	assert.NoError(t, err)
+}
+
+func TestEnsureIndex_Partial(t *testing.T) {
+	collection, cleanup := setupMongoTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	st := NewMongoStore[TestEntity](collection)
+	partial := func() *IndexDefinition {
+		return NewIndex("name").Unique().Partial(map[string]any{
+			"active": true,
+			"age":    map[string]any{"$gt": 18, "$lt": 60},
+		})
+	}
+
+	assert.NoError(t, st.EnsureIndexes(partial()))
+	assert.Contains(t, listIndexNames(t, collection), "name_1")
+
+	_, err := collection.InsertOne(ctx, TestEntity{ID: "1", Name: "same", Active: false})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "2", Name: "same", Active: false})
+	assert.NoError(t, err, "fora do filtro parcial não conflita")
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "3", Name: "same", Active: true, Age: 30})
+	assert.NoError(t, err)
+	_, err = collection.InsertOne(ctx, TestEntity{ID: "4", Name: "same", Active: true, Age: 40})
+	assert.Error(t, err, "dentro do filtro parcial é único")
+
+	t.Run("mesma definição não recria o índice", func(t *testing.T) {
+		ms := st.(*mongoStore[TestEntity])
+		def := partial()
+		model, err := buildMongoIndexModel(def)
+		assert.NoError(t, err)
+		doc, err := ms.findIndexDocumentByName(ctx, "name_1")
+		assert.NoError(t, err)
+		assert.True(t, indexMatchesDefinition(*doc, def, model))
+	})
+
+	t.Run("filtro diferente recria o índice", func(t *testing.T) {
+		assert.NoError(t, st.EnsureIndexes(NewIndex("name").Unique().Partial(map[string]any{"age": map[string]any{"$gt": 50}})))
+
+		_, err := collection.InsertOne(ctx, TestEntity{ID: "5", Name: "same", Active: true, Age: 41})
+		assert.NoError(t, err)
+	})
 }
 
 func TestEnsureIndex_NilDefinition(t *testing.T) {

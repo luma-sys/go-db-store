@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -119,9 +120,23 @@ func (s *SQLStore[T]) FindById(ctx context.Context, id any) (*T, error) {
 }
 
 func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error) {
+	return s.FindOneWith(ctx, f, FindOptions{})
+}
+
+func (s *SQLStore[T]) FindOneWith(ctx context.Context, f map[string]any, opts FindOptions) (*T, error) {
+	columns, err := sqlColumns(opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+
+	orderBy, err := sqlOrderBy(opts.Sort)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
-	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
-	query += whereClause
+	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
+	query += whereClause + orderBy
 
 	// Oracle não suporta LIMIT, usa FETCH FIRST
 	if s.driver == enum.DatabaseDriverOracle {
@@ -157,9 +172,20 @@ func (s *SQLStore[T]) FindOne(ctx context.Context, f map[string]any) (*T, error)
 func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOptions) ([]T, error) {
 	opts.Initialize()
 
+	columns, err := sqlColumns(opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+
+	// SortBy segue sem efeito no SQL: aplicá-lo agora mudaria a query de quem já usa o default createdAt.
+	orderBy, err := sqlOrderBy(opts.Sort)
+	if err != nil {
+		return nil, err
+	}
+
 	whereClause, values := s.buildWhereClause(f)
-	query := fmt.Sprintf("SELECT * FROM %s", s.tableName)
-	query += whereClause
+	query := fmt.Sprintf("SELECT %s FROM %s", columns, s.tableName)
+	query += whereClause + orderBy
 
 	if opts.Limit > 0 {
 		skip := page.Skip(opts.Page, opts.Limit)
@@ -201,8 +227,10 @@ func (s *SQLStore[T]) FindAll(ctx context.Context, f map[string]any, opts FindOp
 
 // Save insere um novo registro
 func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
-	// Implementação genérica requer reflexão
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 	fields := make([]string, 0)
 	placeholders := make([]string, 0)
 	values := make([]any, 0)
@@ -241,7 +269,7 @@ func (s *SQLStore[T]) Save(ctx context.Context, e *T) (*T, error) {
 	if lastID, err := result.LastInsertId(); err == nil && lastID > 0 {
 		// Atualizar o campo ID usando reflexão
 		idField := v.FieldByName("ID")
-		if idField.IsValid() && idField.CanSet() {
+		if idField.CanInt() && idField.CanSet() {
 			idField.SetInt(lastID)
 		}
 	}
@@ -270,7 +298,11 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 	ids := make([]any, len(entities))
 
 	for i, entity := range entities {
-		v := reflect.ValueOf(&entity).Elem()
+		v, err := entityValue(&entity)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 		fields := make([]string, 0)
 		placeholders := make([]string, 0)
 		values := make([]any, 0)
@@ -309,7 +341,7 @@ func (s *SQLStore[T]) SaveMany(ctx context.Context, entities []T) (*InsertManyRe
 		if lastID, err := result.LastInsertId(); err == nil {
 			ids[i] = lastID
 			idField := v.FieldByName("ID")
-			if idField.IsValid() && idField.CanSet() {
+			if idField.CanInt() && idField.CanSet() {
 				idField.SetInt(lastID)
 			}
 		}
@@ -329,7 +361,10 @@ func (s *SQLStore[T]) SaveManyNotOrdered(ctx context.Context, e []T) (*InsertMan
 
 // Update atualiza um registro existente
 func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verifica se existe campo updated_at
 	hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid()
@@ -356,13 +391,8 @@ func (s *SQLStore[T]) Update(ctx context.Context, e *T) (*T, error) {
 		updates = append(updates, fmt.Sprintf("%s = ?", "updated_at"))
 		values = append(values, time.Now())
 
-		// Atualiza o valor no struct também
-		for i := range v.NumField() {
-			field := v.Type().Field(i)
-			if field.Tag.Get("db") == "updated_at" {
-				v.Field(i).Set(reflect.ValueOf(time.Now()))
-				break
-			}
+		if err := stamp(v, time.Now(), false, "UpdatedAt"); err != nil {
+			return nil, err
 		}
 	}
 
@@ -502,7 +532,10 @@ func (s *SQLStore[T]) UpdateMany(ctx context.Context, fd []EntityFieldsToUpdate)
 
 // Upsert cria ou atualiza um registro
 func (s *SQLStore[T]) Upsert(ctx context.Context, e *T, f []StoreUpsertFilter) (*UpdateResult, error) {
-	v := reflect.ValueOf(e).Elem()
+	v, err := entityValue(e)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verifica se existe campo updated_at
 	hasUpdatedAt := v.FieldByName("UpdatedAt").IsValid()
@@ -682,7 +715,11 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 	}()
 
 	for _, entity := range entities {
-		v := reflect.ValueOf(&entity).Elem()
+		v, err := entityValue(&entity)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 
 		// Verifica se é um novo registro
 		idField := v.FieldByName("ID")
@@ -862,7 +899,7 @@ func (s *SQLStore[T]) UpsertMany(ctx context.Context, entities []T, f []StoreUps
 			return nil, fmt.Errorf("unsupported database driver to execute Upsert: %s", s.driver.GetValue())
 		}
 
-		_, err := tx.ExecContext(ctx, query, values...)
+		_, err = tx.ExecContext(ctx, query, values...)
 		if err != nil {
 			tx.Rollback()
 			return nil, err
@@ -1293,8 +1330,45 @@ func (s *SQLStore[T]) convertToType(value reflect.Value, targetType reflect.Type
 		}
 	}
 
-	// Se nenhuma conversão específica funcionar, tenta conversão genérica
+	if !value.CanConvert(targetType) {
+		return reflect.Value{}, fmt.Errorf("não converte %s para %s", value.Type(), targetType)
+	}
 	return reflect.ValueOf(value.Convert(targetType).Interface()), nil
+}
+
+var sqlIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// sqlColumns valida os nomes porque eles entram no texto da query, não como parâmetro.
+func sqlColumns(fields []string) (string, error) {
+	if len(fields) == 0 {
+		return "*", nil
+	}
+	for _, f := range fields {
+		if strings.HasPrefix(f, "-") {
+			return "", fmt.Errorf("projeção por exclusão não suportada no SQL: %s", f)
+		}
+		if !sqlIdentifier.MatchString(f) {
+			return "", fmt.Errorf("nome de coluna inválido: %q", f)
+		}
+	}
+	return strings.Join(fields, ", "), nil
+}
+
+func sqlOrderBy(fields []SortField) (string, error) {
+	if len(fields) == 0 {
+		return "", nil
+	}
+	parts := make([]string, len(fields))
+	for i, f := range fields {
+		if !sqlIdentifier.MatchString(f.Key) {
+			return "", fmt.Errorf("nome de coluna inválido: %q", f.Key)
+		}
+		parts[i] = f.Key + " ASC"
+		if f.Desc {
+			parts[i] = f.Key + " DESC"
+		}
+	}
+	return " ORDER BY " + strings.Join(parts, ", "), nil
 }
 
 // parseRow Função auxiliar de parse de linha do banco
